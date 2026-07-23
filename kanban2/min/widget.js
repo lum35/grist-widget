@@ -1,100 +1,142 @@
-(function(t){typeof define=="function"&&define.amd?define(t):t()})((function(){"use strict";let t,u;const h=new Date("3000-01-01"),R="#DCDCDC",y="#000000";let v,T=[];window.addEventListener("load",async e=>{t=new WidgetSDK,u=await t.loadTranslations(["widget.js"]);const a=`If empty, the widget use the column properties (based on choices or references) to make the list. Else, you can either:
-• Provides a list, separated by ";"
-• Provides a reference to a table or a column starting with a "$" ($TableID or $TableID.ColumnID)`;t.configureOptions([WidgetSDK.newItem("columns",null,"Behavior","Configure the behavior of each columns","Columns",{columnId:"STATUT",template:[WidgetSDK.newItem("addbutton",!0,"Can add card","If checked, display a button to add card to the column."),WidgetSDK.newItem("isdone",!1,"Is done","If checked, cards in the columns are considered as over."),WidgetSDK.newItem("useconfetti",!1,"Use confetti","If checked, confetti apprear when a card enter in the column."),WidgetSDK.newItem("hidecolumn",!1,"Hide","If checked, the column is hidden.")]}),WidgetSDK.newItem("ref","","References","List of task references available.","Cards options",{description:a,columnId:"REFERENCE_PROJET",type:"lookup"}),WidgetSDK.newItem("types","","Type","List of task types available.","Cards options",{description:a,columnId:"TYPE",type:"lookup"}),WidgetSDK.newItem("incharge","","In charge","List of people that can be in charge of the task.","Cards options",{description:a,columnId:"RESPONSABLE",type:"lookup"}),WidgetSDK.newItem("cardcolor","","Card color","List of color available for card background.","Cards options",{description:a,columnId:"COULEUR",type:"lookup"}),WidgetSDK.newItem("rotation",!0,"Tilt","If checked, cards are randomly tilted.","Display"),WidgetSDK.newItem("compact",!1,"Compact","If checked, use a compact rendering.","Display"),WidgetSDK.newItem("readonly",!1,"Read only","If checked, kanban is ready only.","Display"),WidgetSDK.newItem("hideedit",!1,"Hide editing form","If checked, hide the editing form when click on a card.","Display"),WidgetSDK.newItem("gristeditcard",!1,"Grist Record Card","If checked, opens the grist record card on double click.","Display")],"#config-view","#main-view",{onOptChange:$,onOptLoad:$}),t.initMetaData(),t.ready({requiredAccess:"full",allowSelectBy:!0,columns:[{name:"STATUT",title:"Status",description:"Defines the Kanban column",type:"Choice",strictType:!0},{name:"DESCRIPTION",title:"Task",description:"Task name",type:"Any"},{name:"DESCRIPTION_DISPLAY",title:"Task Display",description:"Displayed card content (e.g. a formula column adding html)",type:"Any",optional:!0},{name:"DEADLINE",title:"Deadline",description:"Can also be use as priority",type:"Date",optional:!0},{name:"REFERENCE_PROJET",title:"Reference",description:"Reference associated with the task",type:"Any",optional:!0},{name:"TYPE",title:"Type",description:"Type associated with the task",type:"Any",optional:!0},{name:"RESPONSABLE",title:"Responsables",description:"Personnes responsables de la tâche",type:"RefList",strictType:!0,optional:!0},{name:"CREE_PAR",title:"Created by",type:"Any",optional:!0},{name:"CREE_LE",title:"Creation date",type:"DateTime",optional:!0},{name:"DERNIERE_MISE_A_JOUR",title:"Last update date",description:"Updated after any change",type:"DateTime",optional:!0},{name:"NOTES",title:"Notes",description:"Additional notes",type:"Any",optional:!0},{name:"COULEUR",title:"Card color",description:"Choice or html value",type:"Choice,Text",optional:!0},{name:"TAGS",title:"Tags",description:"Additional fields to display",type:"Any",optional:!0,allowMultiple:!0}]}),t.onRecords(D,{expandRefs:!1,keepEncoded:!1,mapRef:!0}),t.isLoaded().then(async()=>{t.initDone=!0}),grist.on("message",async n=>{n.mappingsChange&&_()})});async function D(e){v=e;const a=document.getElementById("conteneur-kanban");a.innerHTML="";const n=await t.col.STATUT.getChoices();if(!n||n.length===0){console.error(u("No choice available in the Status column"));return}let s;n.forEach((o,i)=>{s=N(o,i),s!=null&&a.appendChild(s)}),e?.length>0&&(e.forEach(o=>{const i=P(o),r=document.querySelector(`.contenu-colonne[data-statut="${o.STATUT}"]`);r&&r.insertBefore(i,r.firstChild)}),t.opt.readonly||document.querySelectorAll(".contenu-colonne").forEach(o=>{new Sortable(o,{group:"kanban-todo",animation:150,onEnd:async function(i){const r=i.to.dataset.statut;if(r===i.from.dataset.statut){if(t.map.DEADLINE){let l=i.item.dataset.deadline||"9999-12-31";if(i.oldIndex!==i.newIndex&&new Date(l)>=h){let E=h.getFullYear(),p=[];document.querySelectorAll(".contenu-colonne").forEach(c=>{c.getAttribute("data-statut")===r&&c.querySelectorAll(".carte").forEach(async m=>{l=m.getAttribute("data-deadline")||"9999-12-31",new Date(l)>=h&&(l=`${E}-01-01`,m.setAttribute("data-deadline",l),E+=1,p.push(t.formatRecord(m.getAttribute("data-todo-id"),{DEADLINE:l})))})});try{await t.updateRecords(p)}catch(c){console.error(u("Error during status update:"),c)}}}}else try{await w(i.item.dataset.todoId,"STATUT",r)}catch(l){console.error(u("Error during status update:"),l)}L(o)}}),L(o)}),document.querySelectorAll(".colonne-kanban").forEach(k))}async function $(e){await t.isMapped(),D(v)}function N(e,a){const n=t.opt.columns[a];if(n.hidecolumn)return null;const s=document.createElement("div");return s.className=`colonne-kanban${!n.addbutton&&!t.opt.compact?" colonne-nobouton":""}`,s.id=e,localStorage.getItem(`column-todo-${e}`)==="true"&&s.classList.add("collapsed"),s.innerHTML=`
-        <div class="entete-colonne" style="background-color: ${t.col.STATUT.getColor(e)??R};color:${t.col.STATUT.getTextColor(e)??y}">
-            <div class="titre-statut">${e} <span class="compteur-colonne">(0)</span></div>
-            ${n.addbutton&&!t.opt.readonly?`
-            <button class="bouton-ajouter-entete ${t.opt.compact?" compact":""}" onclick="creerNouvelleTache('${e}')">+</button>
-            `:""}
-            <button class="bouton-toggle" onclick="toggleColonne(this.closest('.colonne-kanban'), event)">⇄</button>
+(function(a){typeof define=="function"&&define.amd?define(a):a()})((function(){"use strict";let a,m;const I=new Date("3000-01-01"),U="#DCDCDC",W="#000000";let T=[],k=[],A=[],h=new Map,M=null;const D=new Map;window.addEventListener("load",async()=>{a=new WidgetSDK,m=await a.loadTranslations(["widget.js"]);const e=`If empty, the widget uses the column properties (choices or references) to build the list. Otherwise, provide either:
+• A list separated by ";"
+• A table or column reference starting with "$" ($TableID or $TableID.ColumnID)`;a.configureOptions([WidgetSDK.newItem("columns",null,"Behavior","Configure the behavior of each column","Columns",{columnId:"STATUT",template:[WidgetSDK.newItem("addbutton",!0,"Can add card","Display a button to add a card."),WidgetSDK.newItem("isdone",!1,"Is done","Cards in this column are considered completed."),WidgetSDK.newItem("useconfetti",!1,"Use confetti","Display confetti when a card enters this column."),WidgetSDK.newItem("hidecolumn",!1,"Hide","Hide this column.")]}),WidgetSDK.newItem("ref","","References","List of task references available.","Cards options",{description:e,columnId:"REFERENCE_PROJET",type:"lookup"}),WidgetSDK.newItem("types","","Type","List of task types available.","Cards options",{description:e,columnId:"TYPE",type:"lookup"}),WidgetSDK.newItem("cardcolor","","Card color","List of colors available for card backgrounds.","Cards options",{description:e,columnId:"COULEUR",type:"lookup"}),WidgetSDK.newItem("rotation",!0,"Tilt","Randomly tilt cards.","Display"),WidgetSDK.newItem("compact",!1,"Compact","Use a compact rendering.","Display"),WidgetSDK.newItem("readonly",!1,"Read only","Disable all edits.","Display"),WidgetSDK.newItem("hideedit",!1,"Hide editing form","Do not open the editing form when clicking a card.","Display"),WidgetSDK.newItem("gristeditcard",!1,"Grist Record Card","Open the Grist record card on double click.","Display")],"#config-view","#main-view",{onOptChange:z,onOptLoad:z}),a.initMetaData(),a.ready({requiredAccess:"full",allowSelectBy:!0,columns:[{name:"STATUT",title:"Status",description:"Defines the Kanban column",type:"Choice",strictType:!0},{name:"DESCRIPTION",title:"Task",description:"Task name",type:"Any"},{name:"DESCRIPTION_DISPLAY",title:"Task Display",description:"Displayed card content, for example an HTML formula column",type:"Any",optional:!0},{name:"DEADLINE",title:"Deadline",description:"Can also be used as priority",type:"Date",optional:!0},{name:"REFERENCE_PROJET",title:"Reference",description:"Reference associated with the task",type:"Any",optional:!0},{name:"TYPE",title:"Type",description:"Type associated with the task",type:"Any",optional:!0},{name:"RESPONSABLE",title:"Responsables",description:"Personnes responsables de la tâche",type:"RefList",strictType:!0,optional:!0},{name:"CREE_PAR",title:"Created by",type:"Any",optional:!0},{name:"CREE_LE",title:"Creation date",type:"DateTime",optional:!0},{name:"DERNIERE_MISE_A_JOUR",title:"Last update date",description:"Updated after any change",type:"DateTime",optional:!0},{name:"NOTES",title:"Notes",description:"Additional notes",type:"Any",optional:!0},{name:"COULEUR",title:"Card color",description:"Choice or HTML color value",type:"Choice,Text",optional:!0},{name:"TAGS",title:"Tags",description:"Additional fields to display",type:"Any",optional:!0,allowMultiple:!0}]}),a.onRecords(L,{expandRefs:!1,keepEncoded:!1,mapRef:!0}),a.isLoaded().then(async()=>{a.initDone=!0}),grist.on("message",async t=>{t.mappingsChange&&await le()})});async function H(e=!1){if(!a?.map?.RESPONSABLE||!a?.col?.RESPONSABLE){v();return}const t=a.col.RESPONSABLE,[n,o]=String(t.type||"").split(":");if(n!=="RefList"||!o||!t.visibleCol){v();return}const r=`${o}:${t.visibleCol}`;if(!(!e&&M===r&&A.length>0))try{const[s,i]=await Promise.all([grist.docApi.fetchTable(o),t.getMeta(t.visibleCol)]),l=i?.colId,u=Array.isArray(s?.id)?s.id:[],d=l&&Array.isArray(s?.[l])?s[l]:[],E=u.map((p,S)=>{const R=Number(p),w=d[S],j=w==null?"":String(w).trim();return{id:R,label:j}}).filter(p=>Number.isInteger(p.id)&&p.id>0&&p.label&&p.label!=="#KeyError").sort((p,S)=>p.label.localeCompare(S.label,a.cultureFull,{sensitivity:"base"}));A=E,h=new Map(E.map(p=>[p.id,p])),M=r}catch(s){v(),console.error("Impossible de charger la table des responsables :",s)}}function v(){A=[],h=new Map,M=null}async function G(){await a.isMapped(),k=[];const e=g(a.map?.TAGS);e.length!==0&&(k=await Promise.all(e.map(async t=>{try{return await(await a.meta.getColMeta(t))?.getChoices()??[]}catch(n){return console.warn(`Impossible de charger les choix de ${t}`,n),[]}})))}async function L(e){T=Array.isArray(e)?e:[],await Promise.all([H(),G()]);const t=document.getElementById("conteneur-kanban");if(!t)return;t.innerHTML="";const n=await a.col.STATUT.getChoices();if(!Array.isArray(n)||n.length===0){t.innerHTML=`<div class="kanban-message">${c(m("No choice available in the Status column"))}</div>`;return}n.forEach((o,r)=>{const s=ce(o,r);s&&t.appendChild(s)}),T.forEach(o=>{const r=String(o.STATUT??""),s=Array.from(t.querySelectorAll(".contenu-colonne")).find(i=>i.dataset.statut===r);s&&s.insertBefore(ue(o),s.firstChild)}),pe(),document.querySelectorAll(".colonne-kanban").forEach(J)}async function z(){await a.isMapped(),await L(T)}async function le(){v(),await H(!0),await G(),await L(T)}function ce(e,t){const n=ae(t);if(n.hidecolumn)return null;const o=String(e),r=document.createElement("section");r.className=`colonne-kanban${!n.addbutton&&!a.opt.compact?" colonne-nobouton":""}`,r.id=o;const s=oe(o);localStorage.getItem(s)==="true"&&r.classList.add("collapsed");const i=a.col.STATUT.getColor(o)??U,l=a.col.STATUT.getTextColor(o)??W,u=c(o),d=we(o);return r.innerHTML=`
+        <div class="entete-colonne" style="background-color:${i};color:${l}">
+            <div class="titre-statut">${u} <span class="compteur-colonne">(0)</span></div>
+            <div class="actions-colonne">
+                ${n.addbutton&&!a.opt.readonly?`<button type="button" class="bouton-ajouter-entete ${a.opt.compact?"compact":""}" onclick="creerNouvelleTache(decodeURIComponent('${d}'))" aria-label="${c(m("Add a new task"))}">+</button>`:""}
+                <button type="button" class="bouton-toggle" onclick="toggleColonne(this.closest('.colonne-kanban'), event)" aria-label="Replier ou déplier">⇄</button>
+            </div>
         </div>
-        ${n.addbutton&&!t.opt.readonly?`
-            <button class="bouton-ajouter ${t.opt.compact?" compact":""}" onclick="creerNouvelleTache('${e}')">+ ${u("Add a new task")}</button>
-        `:""}
-        <div class="contenu-colonne" data-statut="${e}"></div>
-    `,s}function _(){const e=document.getElementsByClassName("colonne-kanban");Array.prototype.forEach.call(e,a=>{a.style=`background-color: ${t.col.STATUT.getColor(a.id)??R};color:${t.col.STATUT.getTextColor(a.id)??y}`}),U()}async function U(){await t.isMapped(),T=[],t.map.TAGS&&(T=await t.map.TAGS.map(async e=>await(await t.meta.getColMeta(e))?.getChoices()??[]),T=await Promise.all(T))}function P(e){const a=document.createElement("div");a.className=`carte ${t.opt.rotation?"":" norotate"}${t.opt.compact?" compact":""}`,a.setAttribute("data-todo-id",e.id),a.setAttribute("data-last-update",e.DERNIERE_MISE_A_JOUR||""),a.setAttribute("data-deadline",e.DEADLINE||""),e.COULEUR&&t.col.COULEUR.type==="Choice"&&(t.col.COULEUR.getColor(e.COULEUR)?a.setAttribute("style",`background-color: ${t.col.COULEUR.getColor(e.COULEUR)}`):a.setAttribute("style",`background-color: ${(e.COULEUR.startsWith("#")?"":"#")+e.COULEUR}`));const n=e.TYPE||"",s=e.DESCRIPTION_DISPLAY||e.DESCRIPTION||u("No description"),o=e.DEADLINE?b(e.DEADLINE):"",i=(Array.isArray(e.RESPONSABLE)?e.RESPONSABLE:e.RESPONSABLE?[e.RESPONSABLE]:[]).map(String).filter(d=>d&&d!=="#KeyError"),r=i[0],l=r?`
-        <span class="responsable-badge">
-            ${I(r)}
-        </span>
-
-        ${i.length>1?`<span class="responsable-badge responsable-plus">+${i.length-1}</span>`:""}
-    `:"",E=e.REFERENCE_PROJET,p=e.TAGS||[];let c="";p.forEach(d=>c+=d?`<div class="more-tag">${d}</div>`:"");const m=t.getValueListOption("columns",e.STATUT);return a.innerHTML=`
-    ${E&&E.length>0?`<div class="projet-ref truncate">#${E}</div>`:""}
-    ${n?`<div class="type-tag truncate">${n}</div>`:E&&E.length>0?"<div>&nbsp;</div>":""}
-    ${p.length>0?`<div>${c}</div>`:""}
-    <div class="description">${s}</div>
-    ${o?`<div class="deadline${e.DEADLINE<Date.now()?" late":""} truncate">📅 ${o}</div>`:i.length?"<div>&nbsp;</div>":""}
-    ${i.length?`<div class="responsables-list">${l}</div>`:""}
-    ${m?.isdone?`<div class="tampon-termine" style="color: ${t.col.STATUT.getColor(e.STATUT)??R};">${e.STATUT}</div>`:""}      
-`,a.addEventListener("click",()=>{grist.setCursorPos({rowId:e.id}),t.opt.hideedit||A(e)}),a.addEventListener("dblclick",()=>{grist.setCursorPos({rowId:e.id}),t.opt.gristeditcard?grist.commandApi.run("viewAsCard"):t.opt.hideedit||A(e)}),a}async function w(e,a,n,s){try{if(s?.stopPropagation(),a==="STATUT"){const i=t.getValueListOption("columns",n);i&&i.useconfetti&&q()}let o={[a]:n||void 0};t.map.DERNIERE_MISE_A_JOUR&&(o.DERNIERE_MISE_A_JOUR=new Date().toISOString()),await t.updateRecords(t.formatRecord(e,o))}catch(o){console.error(u("Error during update:"),o)}}function L(e){const a=Array.from(e.children),n=e.dataset.isdone;a.sort((s,o)=>{let i=0;if(t.map.DEADLINE)if(n){const r=s.getAttribute("data-last-update")||"1970-01-01",l=o.getAttribute("data-last-update")||"1970-01-01";i=new Date(l)-new Date(r)}else{const r=s.getAttribute("data-deadline")||"9999-12-31",l=o.getAttribute("data-deadline")||"9999-12-31";i=new Date(r)-new Date(l)}if(i===0){const r=parseInt(s.getAttribute("data-todo-id"))||0,l=parseInt(o.getAttribute("data-todo-id"))||0;return r-l}else return i}),a.forEach(s=>e.appendChild(s))}function k(e){const a=e.querySelector(".contenu-colonne"),n=e.querySelector(".compteur-colonne");a&&n&&(n.textContent=`(${a.children.length})`)}function A(e){const a=document.getElementById("popup-todo"),n=document.querySelector(".carte.active"),s=document.querySelector(`[data-todo-id="${e.id}"]`),o=t.getValueListOption("columns",e.STATUT);if(t.opt.readonly){S();return}n?.classList.remove("active"),s?.classList.add("active"),a.style=`border-left-color: ${t.col.STATUT.getColor(e.STATUT)??R}`,a.dataset.statut=e.STATUT,a.dataset.isdone=o?!1:o.isdone,a.dataset.currentTodo=e.id;const i=a.querySelector(".popup-title"),r=a.querySelector(".popup-content"),l=a.querySelector(".popup-header");l.style=`background-color: ${t.col.STATUT.getColor(e.STATUT)??R};color:${t.col.STATUT.getTextColor(e.STATUT)??y}`;const E=a.querySelector(".bouton-fermer");E.style=`color:${t.col.STATUT.getTextColor(e.STATUT)??y}`,i.textContent=e.DESCRIPTION||u("New task");let p=1,c='<div class="field-row">';t.map.DEADLINE&&(c+=`
+        ${n.addbutton&&!a.opt.readonly?`<button type="button" class="bouton-ajouter ${a.opt.compact?"compact":""}" onclick="creerNouvelleTache(decodeURIComponent('${d}'))">+ ${c(m("Add a new task"))}</button>`:""}
+        <div class="contenu-colonne" data-statut="${b(o)}" data-isdone="${n.isdone?"true":"false"}"></div>
+    `,r}function ue(e){const t=document.createElement("article");t.className=`carte${a.opt.rotation?"":" norotate"}${a.opt.compact?" compact":""}`,t.dataset.todoId=String(e.id),t.dataset.lastUpdate=se(e.DERNIERE_MISE_A_JOUR),t.dataset.deadline=se(e.DEADLINE),de(t,e.COULEUR);const n=f(e.TYPE),o=f(e.REFERENCE_PROJET),r=e.DEADLINE?F(e.DEADLINE):"",s=re(e),i=g(e.TAGS).flatMap(R=>g(R)).map(f).filter(Boolean),l=e.DESCRIPTION_DISPLAY?String(e.DESCRIPTION_DISPLAY):c(f(e.DESCRIPTION)||m("No description")),u=s.map(R=>`<span class="responsable-badge">${c(R)}</span>`).join(""),d=i.map(R=>`<span class="more-tag">${c(R)}</span>`).join(""),E=x(e.STATUT),p=q(e.DEADLINE),S=p!==null&&p<Date.now()&&p<I.getTime();return t.innerHTML=`
+        ${o?`<div class="projet-ref truncate">#${c(o)}</div>`:""}
+        ${n?`<div class="type-tag truncate">${c(n)}</div>`:o?'<div class="card-spacer">&nbsp;</div>':""}
+        ${d?`<div class="tags-list">${d}</div>`:""}
+        <div class="description">${l}</div>
+        ${r?`<div class="deadline${S?" late":""} truncate">📅 ${c(r)}</div>`:s.length?'<div class="card-spacer">&nbsp;</div>':""}
+        ${s.length?`<div class="responsables-list">${u}</div>`:""}
+        ${E?.isdone?`<div class="tampon-termine" style="color:${a.col.STATUT.getColor(e.STATUT)??U};">${c(f(e.STATUT))}</div>`:""}
+    `,t.addEventListener("click",()=>{grist.setCursorPos({rowId:e.id}),a.opt.hideedit||$(e)}),t.addEventListener("dblclick",()=>{grist.setCursorPos({rowId:e.id}),a.opt.gristeditcard?grist.commandApi.run("viewAsCard"):a.opt.hideedit||$(e)}),t}function de(e,t){if(!t||!a.map?.COULEUR||!a.col?.COULEUR)return;let n="";if(a.col.COULEUR.type==="Choice")n=a.col.COULEUR.getColor(t)||"";else{const o=String(t).trim();/^#?[0-9a-f]{3,8}$/i.test(o)?n=o.startsWith("#")?o:`#${o}`:/^[a-z]+$/i.test(o)&&(n=o)}n&&(e.style.backgroundColor=n)}function pe(){document.querySelectorAll(".contenu-colonne").forEach(e=>{V(e),!(a.opt.readonly||typeof Sortable!="function")&&new Sortable(e,{group:"kanban-todo",animation:150,ghostClass:"carte-fantome",chosenClass:"carte-selectionnee",onEnd:async t=>{const n=t.to.dataset.statut,o=t.from.dataset.statut,r=t.item.dataset.todoId;try{n!==o?await Z(r,"STATUT",n):t.oldIndex!==t.newIndex&&await me(t.to)}catch(s){console.error(m("Error during status update:"),s),await L(T)}V(t.to),J(t.to.closest(".colonne-kanban")),t.from!==t.to&&J(t.from.closest(".colonne-kanban"))}})})}async function me(e){if(!a.map?.DEADLINE)return;const n=Array.from(e.querySelectorAll(".carte")).filter(s=>{const i=q(s.dataset.deadline);return i===null||i>=I.getTime()});if(n.length===0)return;let o=I.getFullYear();const r=n.map(s=>{const i=`${o}-01-01`;return o+=1,s.dataset.deadline=i,a.formatRecord(s.dataset.todoId,{DEADLINE:i})});await a.updateRecords(r)}function V(e){if(!e)return;const t=e.dataset.isdone==="true",n=Array.from(e.children);n.sort((o,r)=>{let s=0;return a.map?.DEADLINE&&(t?s=P(r.dataset.lastUpdate,0)-P(o.dataset.lastUpdate,0):s=P(o.dataset.deadline,Number.MAX_SAFE_INTEGER)-P(r.dataset.deadline,Number.MAX_SAFE_INTEGER)),s!==0?s:(Number(o.dataset.todoId)||0)-(Number(r.dataset.todoId)||0)}),n.forEach(o=>e.appendChild(o))}function J(e){if(!e)return;const t=e.querySelector(".contenu-colonne"),n=e.querySelector(".compteur-colonne");t&&n&&(n.textContent=`(${t.children.length})`)}function $(e){const t=document.getElementById("popup-todo");if(!t)return;if(a.opt.readonly){C();return}document.querySelector(".carte.active")?.classList.remove("active"),ne(e.id)?.classList.add("active");const n=x(e.STATUT),o=a.col.STATUT.getColor(e.STATUT)??U,r=a.col.STATUT.getTextColor(e.STATUT)??W;t.style.borderLeftColor=o,t.dataset.statut=f(e.STATUT),t.dataset.isdone=n?.isdone?"true":"false",t.dataset.currentTodo=String(e.id);const s=t.querySelector(".popup-title"),i=t.querySelector(".popup-content"),l=t.querySelector(".popup-header"),u=t.querySelector(".bouton-fermer");if(s&&(s.textContent=f(e.DESCRIPTION)||m("New task")),l&&(l.style.backgroundColor=o,l.style.color=r),u&&(u.style.color=r),!i)return;const d=[];a.map?.DEADLINE&&d.push(`
             <div class="field">
-            <label class="field-label">${t.map.DEADLINE}</label>
-            <input type="date" class="field-input" 
-                    value="${W(e.DEADLINE)}"
-                    onchange="mettreAJourChamp(${e.id}, 'DEADLINE', this.value, event)">
-            </div>
-        `),t.map.REFERENCE_PROJET&&(c+=C(e.id,e.REFERENCE_PROJET,t.valuesList.ref,t.map.REFERENCE_PROJET,"REFERENCE_PROJET",t.col.REFERENCE_PROJET.getIsFormula()),p+=1),p%2===0&&(c+='</div><div class="field-row">'),t.map.TYPE&&(c+=C(e.id,e.TYPE,t.valuesList.types,t.map.TYPE,"TYPE",t.col.TYPE.getIsFormula()),p+=1),p%2===0&&(c+='</div><div class="field-row">'),t.map.RESPONSABLE&&(c+=x(e.id,e.RESPONSABLE,t.valuesList.incharge,t.map.RESPONSABLE,"RESPONSABLE",t.col.RESPONSABLE.getIsFormula()),p+=1),p%2===0&&(c+='</div><div class="field-row">'),t.map.TAGS&&t.map.TAGS.forEach((m,d)=>{c+=C(e.id,e.TAGS[d],T[d],m,m,t.col.TAGS[d].getIsFormula()),p+=1,p%2===0&&(c+='</div><div class="field-row">')}),t.map.COULEUR&&(c+=C(e.id,e.COULEUR,t.valuesList.cardcolor,t.map.COULEUR,"COULEUR"),t.col.COULEUR.getIsFormula(),p+=1),c+=`</div>
-        <div class="field">
-            <label class="field-label">${t.map.DESCRIPTION}</label>
-            <textarea class="field-textarea auto-expand" 
-                    onchange="mettreAJourChamp(${e.id}, 'DESCRIPTION', this.value, event)"
-                    oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'">${e.DESCRIPTION||""}</textarea>
-        </div>
-    `,t.map.NOTES&&(c+=`<div class="field">
-            <label class="field-label">${t.map.NOTES}</label>
-            <textarea class="field-textarea auto-expand" 
-                      onchange="mettreAJourChamp(${e.id}, 'NOTES', this.value, event)"
-                      oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'">${e.NOTES||""}</textarea>
-          </div>
-        `),(t.map.CREE_LE&&e.CREE_LE||t.map.CREE_PAR&&e.CREE_PAR||t.map.DERNIERE_MISE_A_JOUR&&e.DERNIERE_MISE_A_JOUR)&&(c+=`<div class="info-creation">
-                ${u("Created")} ${t.map.CREE_LE&&e.CREE_LE?u("on %on",{on:b(e.CREE_LE)}):""} 
-                ${t.map.CREE_PAR&&e.CREE_PAR?u("by %by",{by:e.CREE_PAR||"-"}):""}
-                ${t.map.DERNIERE_MISE_A_JOUR&&e.DERNIERE_MISE_A_JOUR?"<br>"+u("Last update on %on",{on:b(e.DERNIERE_MISE_A_JOUR)||"-"}):""}
-            </div>
-        `),t.opt.readonly||(c+=` 
-          <div class="popup-actions">
-            <button class="popup-action-button bouton-supprimer" onclick="supprimerTodo(${e.id}, event)" 
-                    title="${u("Remove the task")}">🗑️</button>
-          </div>
-        `),r.innerHTML=c,setTimeout(()=>{document.querySelectorAll(".auto-expand").forEach(d=>{d.style.height="",d.style.height=d.scrollHeight+"px"})},0),a.classList.add("visible")}function C(e,a,n,s,o,i){let r="";return n?.length>0?n.length<10?(r+=`
-                <div class="field">
-                    <label class="field-label">${s}</label>
-                    <select class="field-select" onchange="mettreAJourChamp(${e}, '${o}', this.value, event)">
-                    <option value="" ${i?"disabled":""}></option>`,n.forEach(l=>{r+=`<option value="${l}" ${a===l?"selected":""}>${l}</option>`}),r+=`</select>
-                </div>        
-            `):(r+=`
-                <div class="field">
-                    <label class="field-label">${s}</label>
-                    <input type="text" list="list-${o}" class="field-select" onchange="mettreAJourChamp(${e}, '${o}', this.value, event)" ${i?"disabled":""}/>
-                    <datalist id="list-${o}">`,n.forEach(l=>{r+=`<option value="${l}" ${a===l?"selected":""}>${l}</option>`}),r+=`</datalist>
-                </div>        
-            `):r+=`
-            <div class="field">
-                <label class="field-label">${s}</label>
-                <input type="text" class="field-input" value="${a||""}" 
-                    onchange="mettreAJourChamp(${e}, '${o}', this.value, event)" ${i?"disabled":""}>
-            </div>
-        `,r}function I(e){return String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;")}function J(e){return!e||e.length===0?"Choisir…":e.length===1?e[0]:`${e[0]} +${e.length-1}`}function x(e,a,n,s,o,i){const l=(Array.isArray(a)?a:a?[a]:[]).map(String).filter(d=>d&&d!=="#KeyError"),E=new Set(l),c=[...new Set((n||[]).map(String).filter(d=>d&&d!=="#KeyError"))].map(d=>{const f=I(d);return`
-            <label class="multi-option">
+                <label class="field-label">${c(a.map.DEADLINE)}</label>
                 <input
-                    type="checkbox"
-                    value="${f}"
-                    ${E.has(d)?"checked":""}
-                    onchange="mettreAJourChampMultiple(${e}, '${o}', this.closest('.multi-dropdown'), event)"
-                    ${i?"disabled":""}
+                    type="date"
+                    class="field-input"
+                    value="${b(Ce(e.DEADLINE))}"
+                    onchange="mettreAJourChamp(${Number(e.id)}, 'DEADLINE', this.value || null, event)"
+                    ${a.col.DEADLINE.getIsFormula()?"disabled":""}
                 >
-                <span>${f}</span>
-            </label>
-        `}).join(""),m=I(J(l));return`
+            </div>
+        `),a.map?.REFERENCE_PROJET&&d.push(O(e.id,e.REFERENCE_PROJET,a.valuesList.ref,a.map.REFERENCE_PROJET,"REFERENCE_PROJET",a.col.REFERENCE_PROJET.getIsFormula())),a.map?.TYPE&&d.push(O(e.id,e.TYPE,a.valuesList.types,a.map.TYPE,"TYPE",a.col.TYPE.getIsFormula())),a.map?.RESPONSABLE&&d.push(fe(e.id,Ie(e),a.map.RESPONSABLE,a.col.RESPONSABLE.getIsFormula()));const E=g(a.map?.TAGS),p=g(a.col?.TAGS),S=g(e.TAGS);E.forEach((y,Y)=>{d.push(O(e.id,S[Y],k[Y],y,y,p[Y]?.getIsFormula?.()??!1))}),a.map?.COULEUR&&d.push(O(e.id,e.COULEUR,a.valuesList.cardcolor,a.map.COULEUR,"COULEUR",a.col.COULEUR.getIsFormula()));const R=[];for(let y=0;y<d.length;y+=2)R.push(`<div class="field-row">${d[y]}${d[y+1]||""}</div>`);const w=c(f(e.DESCRIPTION)),j=c(f(e.NOTES));let N=R.join("");N+=`
         <div class="field">
-            <label class="field-label">${s}</label>
-
-            <details class="multi-dropdown">
-                <summary>${m}</summary>
-
+            <label class="field-label">${c(a.map.DESCRIPTION)}</label>
+            <textarea
+                class="field-textarea auto-expand"
+                onchange="mettreAJourChamp(${Number(e.id)}, 'DESCRIPTION', this.value, event)"
+                oninput="ajusterTextarea(this)"
+            >${w}</textarea>
+        </div>
+    `,a.map?.NOTES&&(N+=`
+            <div class="field">
+                <label class="field-label">${c(a.map.NOTES)}</label>
+                <textarea
+                    class="field-textarea auto-expand"
+                    onchange="mettreAJourChamp(${Number(e.id)}, 'NOTES', this.value, event)"
+                    oninput="ajusterTextarea(this)"
+                    ${a.col.NOTES.getIsFormula()?"disabled":""}
+                >${j}</textarea>
+            </div>
+        `);const ie=Ae(e);ie&&(N+=`<div class="info-creation">${ie}</div>`),N+=`
+        <div class="popup-actions">
+            <button
+                type="button"
+                class="popup-action-button bouton-supprimer"
+                onclick="supprimerTodo(${Number(e.id)}, event)"
+                title="${b(m("Remove the task"))}"
+                aria-label="${b(m("Remove the task"))}"
+            >🗑️</button>
+        </div>
+    `,i.innerHTML=N,i.querySelectorAll(".auto-expand").forEach(ee),t.classList.add("visible")}function O(e,t,n,o,r,s){const i=f(t),l=[...new Set(g(n).map(f).filter(Boolean))],u=c(o);if(l.length>0&&l.length<20){const d=l.map(E=>`
+            <option value="${b(E)}" ${E===i?"selected":""}>
+                ${c(E)}
+            </option>
+        `).join("");return`
+            <div class="field">
+                <label class="field-label">${u}</label>
+                <select
+                    class="field-select"
+                    onchange="mettreAJourChamp(${Number(e)}, '${K(r)}', this.value, event)"
+                    ${s?"disabled":""}
+                >
+                    <option value=""></option>
+                    ${d}
+                </select>
+            </div>
+        `}if(l.length>=20){const d=`list-${r}-${e}`.replace(/[^a-zA-Z0-9_-]/g,"-"),E=l.map(p=>`<option value="${b(p)}"></option>`).join("");return`
+            <div class="field">
+                <label class="field-label">${u}</label>
+                <input
+                    type="text"
+                    list="${d}"
+                    class="field-input"
+                    value="${b(i)}"
+                    onchange="mettreAJourChamp(${Number(e)}, '${K(r)}', this.value, event)"
+                    ${s?"disabled":""}
+                >
+                <datalist id="${d}">${E}</datalist>
+            </div>
+        `}return`
+        <div class="field">
+            <label class="field-label">${u}</label>
+            <input
+                type="text"
+                class="field-input"
+                value="${b(i)}"
+                onchange="mettreAJourChamp(${Number(e)}, '${K(r)}', this.value, event)"
+                ${s?"disabled":""}
+            >
+        </div>
+    `}function fe(e,t,n,o){const r=new Set(B(t)),s=A.map(l=>`
+        <label class="multi-option" data-search="${b(l.label.toLocaleLowerCase(a.cultureFull))}">
+            <input
+                type="checkbox"
+                value="${l.id}"
+                data-label="${b(l.label)}"
+                ${r.has(l.id)?"checked":""}
+                onchange="mettreAJourChampMultiple(${Number(e)}, this.closest('.multi-dropdown'), event)"
+                ${o?"disabled":""}
+            >
+            <span>${c(l.label)}</span>
+        </label>
+    `).join(""),i=[...r].map(l=>h.get(l)?.label).filter(Boolean);return`
+        <div class="field field-responsables">
+            <label class="field-label">${c(n)}</label>
+            <details class="multi-dropdown" data-row-id="${Number(e)}">
+                <summary>${c(X(i))}</summary>
                 <div class="multi-dropdown-menu">
-                    ${c||'<div class="multi-empty">Aucun membre disponible</div>'}
+                    <div class="multi-toolbar">
+                        <input
+                            type="search"
+                            class="multi-search"
+                            placeholder="Rechercher…"
+                            oninput="filtrerResponsables(this)"
+                            onclick="event.stopPropagation()"
+                            ${o?"disabled":""}
+                        >
+                        <button
+                            type="button"
+                            class="multi-clear"
+                            onclick="viderResponsables(this, event)"
+                            ${o?"disabled":""}
+                        >Effacer</button>
+                    </div>
+                    <div class="multi-options">
+                        ${s||'<div class="multi-empty">Aucun membre disponible</div>'}
+                    </div>
+                    <div class="multi-status" aria-live="polite"></div>
                 </div>
             </details>
         </div>
-    `}async function M(e,a,n,s){s?.stopPropagation();try{const o=Array.from(n.querySelectorAll('input[type="checkbox"]:checked')).map(g=>g.value).filter(Boolean),[i,r]=t.col.RESPONSABLE.type.split(":");if(i!=="RefList"||!r)throw new Error("La colonne Responsable n’est pas une RefList valide.");const l=await grist.docApi.fetchTable(r),E=await t.col.RESPONSABLE.getMeta(t.col.RESPONSABLE.visibleCol),p=l[E.colId]||[],m=["L",...o.map(g=>{const O=p.findIndex(Y=>String(Y)===String(g));return O===-1?(console.warn(`Responsable introuvable : ${g}`),null):Number(l.id[O])}).filter(g=>Number.isInteger(g)&&g>0)],d={[a]:m};t.map.DERNIERE_MISE_A_JOUR&&(d.DERNIERE_MISE_A_JOUR=new Date().toISOString()),console.log("Envoi Responsable à Grist :",m),await t.updateRecords(t.formatRecord(e,d),!1);const f=n.querySelector("summary");f&&(o.length===0?f.textContent="Choisir…":o.length===1?f.textContent=o[0]:f.textContent=`${o.length} responsables`)}catch(o){console.error("Erreur lors de l’enregistrement des responsables :",o)}}function S(){const e=document.getElementById("popup-todo"),a=e.dataset.currentTodo,n=document.querySelector(`[data-todo-id="${a}"]`);n&&n.classList.remove("active"),e.classList.remove("visible")}document.addEventListener("keydown",e=>{e.key==="Escape"&&S()}),document.addEventListener("click",e=>{const a=document.getElementById("popup-todo");a.classList.contains("visible")&&!a.querySelector(".popup-content").contains(e.target)&&!e.target.closest(".carte")&&!e.target.closest(".popup-header")&&S()});async function B(e){try{let a={DESCRIPTION:"",STATUT:e};t.map.TYPE&&!t.col.TYPE.getIsFormula()&&(a.TYPE=""),t.map.REFERENCE_PROJET&&!t.col.REFERENCE_PROJET.getIsFormula()&&(a.REFERENCE_PROJET=null),t.map.DERNIERE_MISE_A_JOUR&&!t.col.DERNIERE_MISE_A_JOUR.getIsFormula()&&(a.DERNIERE_MISE_A_JOUR=new Date().toISOString()),t.map.CREE_LE&&!t.col.CREE_LE.getIsFormula()&&(a.CREE_LE=new Date().toISOString());const n=await t.createRecords({fields:a});if(n.id&&n.id>0){const s=await t.fetchSelectedRecord(n.id);grist.setCursorPos({rowId:n.id}),t.opt.hideedit||A(s)}}catch(a){console.error(u("Error on creation:"),a)}}async function F(e,a){if(a?.stopPropagation(),confirm(u("Are you sure you want to delete this task?")))try{await t.destroyRecords(e),S()}catch(n){console.error(u("Error on delete:"),n)}}function K(e,a){a?.stopPropagation(),e.classList.toggle("collapsed"),localStorage.setItem(`column-todo-${e.querySelector(".titre-statut").textContent.trim()}`,e.classList.contains("collapsed"))}function q(){const a=Date.now()+2e3,n={startVelocity:30,spread:360,ticks:60,zIndex:0};function s(i,r){return Math.random()*(r-i)+i}const o=setInterval(function(){const i=a-Date.now();if(i<=0)return clearInterval(o);const r=50*(i/2e3);confetti(Object.assign({},n,{particleCount:r,origin:{x:s(.1,.3),y:Math.random()-.2}})),confetti(Object.assign({},n,{particleCount:r,origin:{x:s(.7,.9),y:Math.random()-.2}}))},250)}function b(e){if(!e)return"-";const a=new Date(e);if(a>=h)return null;const n=a.getDate().toString().padStart(2,"0"),s=a.toLocaleDateString(t.cultureFull,{month:"short"}),o=a.getFullYear();return`${n} ${s} ${o}`}function W(e){if(!e)return"";try{const a=new Date(e);return a>=h?"":a.toISOString().split("T")[0]}catch(a){return console.error(u("Error on date formating:"),a),""}}window.toggleColonne=K,window.togglePopupTodo=A,window.fermerPopup=S,window.mettreAJourChamp=w,window.creerNouvelleTache=B,window.supprimerTodo=F,window.mettreAJourChampMultiple=M}));
+    `}function X(e){const t=g(e).filter(Boolean);return t.length===0?"Choisir…":t.length===1?t[0]:`${t.length} responsables`}function Ee(e){const t=e.closest(".multi-dropdown");if(!t)return;const n=e.value.trim().toLocaleLowerCase(a.cultureFull);t.querySelectorAll(".multi-option").forEach(o=>{o.hidden=n!==""&&!String(o.dataset.search||"").includes(n)})}function ge(e,t){t?.preventDefault(),t?.stopPropagation();const n=e.closest(".multi-dropdown");n&&(n.querySelectorAll('input[type="checkbox"]:checked').forEach(o=>{o.checked=!1}),Q(Number(n.dataset.rowId||0),n,t))}async function Q(e,t,n){n?.stopPropagation();const o=Number(e||t?.dataset?.rowId||t?.closest("[data-row-id]")?.dataset?.rowId);if(!Number.isInteger(o)||o<=0||!t){console.error("Identifiant de ligne invalide pour les responsables.",{rowId:e,resolvedRowId:o});return}const r=Array.from(t.querySelectorAll('input[type="checkbox"]:checked')).map(u=>Number(u.value)).filter(u=>Number.isInteger(u)&&u>0&&h.has(u)),s=r.map(u=>h.get(u).label);he(t,s),_(t,"saving","Enregistrement…");const l=(D.get(o)||Promise.resolve()).catch(()=>{}).then(()=>be(o,r)).then(()=>{Re(o,r),_(t,"saved","Enregistré"),window.setTimeout(()=>_(t,"",""),1200)}).catch(u=>{_(t,"error","Échec de l’enregistrement"),console.error("Erreur lors de l’enregistrement des responsables :",u)}).finally(()=>{D.get(o)===l&&D.delete(o)});D.set(o,l),await l}async function be(e,t){const n=a.map?.RESPONSABLE;if(!n||Array.isArray(n))throw new Error("La colonne Responsable n’est pas correctement mappée.");if(await grist.getTable().update({id:Number(e),fields:{[n]:[...t]}}),a.map?.DERNIERE_MISE_A_JOUR&&!a.col.DERNIERE_MISE_A_JOUR.getIsFormula())try{await a.updateRecords(a.formatRecord(e,{DERNIERE_MISE_A_JOUR:new Date().toISOString()}))}catch(r){console.warn("Responsables enregistrés, mais date de mise à jour non modifiée :",r)}}function Re(e,t){const n=T.find(o=>Number(o.id)===Number(e));n&&(n.RESPONSABLE_id=[...t],n.RESPONSABLE=t.map(o=>h.get(o)?.label).filter(Boolean))}function he(e,t){const n=e.querySelector("summary");n&&(n.textContent=X(t))}function _(e,t,n){const o=e.querySelector(".multi-status");o&&(o.className=`multi-status${t?` ${t}`:""}`,o.textContent=n)}async function Z(e,t,n,o){o?.stopPropagation();try{t==="STATUT"&&x(n)?.useconfetti&&Ne();const r={[t]:n};a.map?.DERNIERE_MISE_A_JOUR&&t!=="DERNIERE_MISE_A_JOUR"&&!a.col.DERNIERE_MISE_A_JOUR.getIsFormula()&&(r.DERNIERE_MISE_A_JOUR=new Date().toISOString()),await a.updateRecords(a.formatRecord(e,r))}catch(r){throw console.error(m("Error during update:"),r),r}}async function Se(e){try{const t={DESCRIPTION:"",STATUT:e};a.map?.TYPE&&!a.col.TYPE.getIsFormula()&&(t.TYPE=""),a.map?.REFERENCE_PROJET&&!a.col.REFERENCE_PROJET.getIsFormula()&&(t.REFERENCE_PROJET=null),a.map?.DERNIERE_MISE_A_JOUR&&!a.col.DERNIERE_MISE_A_JOUR.getIsFormula()&&(t.DERNIERE_MISE_A_JOUR=new Date().toISOString()),a.map?.CREE_LE&&!a.col.CREE_LE.getIsFormula()&&(t.CREE_LE=new Date().toISOString());const n=await a.createRecords({fields:t});if(n?.id>0){grist.setCursorPos({rowId:n.id});const o=await a.fetchSelectedRecord(n.id);a.opt.hideedit||$(o)}}catch(t){console.error(m("Error on creation:"),t)}}async function ye(e,t){if(t?.stopPropagation(),!!confirm(m("Are you sure you want to delete this task?")))try{await a.destroyRecords(e),C()}catch(n){console.error(m("Error on delete:"),n)}}function C(){const e=document.getElementById("popup-todo");if(!e)return;const t=e.dataset.currentTodo;ne(t)?.classList.remove("active"),e.classList.remove("visible"),te()}function Te(e,t){if(t?.stopPropagation(),!e)return;e.classList.toggle("collapsed");const n=e.querySelector(".titre-statut")?.childNodes?.[0]?.textContent?.trim()||e.id;localStorage.setItem(oe(n),String(e.classList.contains("collapsed")))}function ee(e){e&&(e.style.height="",e.style.height=`${e.scrollHeight}px`)}function te(e=null){document.querySelectorAll(".multi-dropdown[open]").forEach(t=>{t!==e&&t.removeAttribute("open")})}document.addEventListener("keydown",e=>{if(e.key==="Escape"){const t=document.querySelector(".multi-dropdown[open]");t?t.removeAttribute("open"):C()}}),document.addEventListener("click",e=>{const t=e.target.closest(".multi-dropdown");te(t);const n=document.getElementById("popup-todo");if(!n?.classList.contains("visible"))return;const o=n.contains(e.target),r=!!e.target.closest(".carte");!o&&!r&&C()});function ne(e){return Array.from(document.querySelectorAll(".carte")).find(t=>Number(t.dataset.todoId)===Number(e))||null}function ae(e){return{addbutton:!1,isdone:!1,useconfetti:!1,hidecolumn:!1,...(Array.isArray(a.opt?.columns)?a.opt.columns:[])[e]||{}}}function x(e){const n=(a.valuesList?.columns||[]).indexOf(e);return n>=0?ae(n):null}function oe(e){return`column-todo-${String(e)}`}function Ie(e){const t=B(e?.RESPONSABLE_id);if(t.length>0)return t;const n=re(e);if(n.length===0)return[];const o=[...A];return n.flatMap(r=>{const s=o.findIndex(l=>l.label===r);if(s<0)return[];const[i]=o.splice(s,1);return[i.id]})}function re(e){const t=g(e?.RESPONSABLE).map(f).filter(n=>n&&n!=="#KeyError");return t.length>0?t:B(e?.RESPONSABLE_id).map(n=>h.get(n)?.label).filter(Boolean)}function B(e){let t=g(e);return t[0]==="L"&&(t=t.slice(1)),[...new Set(t.map(Number).filter(n=>Number.isInteger(n)&&n>0))]}function g(e){return e==null||e===""?[]:Array.isArray(e)?e:[e]}function f(e){return e==null?"":String(e)}function Ae(e){const t=!!(a.map?.CREE_LE&&e.CREE_LE),n=!!(a.map?.CREE_PAR&&e.CREE_PAR),o=!!(a.map?.DERNIERE_MISE_A_JOUR&&e.DERNIERE_MISE_A_JOUR);if(!t&&!n&&!o)return"";const r=[c(m("Created"))];t&&r.push(c(m("on %on",{on:F(e.CREE_LE)}))),n&&r.push(c(m("by %by",{by:f(e.CREE_PAR)})));let s=r.join(" ");return o&&(s+=`<br>${c(m("Last update on %on",{on:F(e.DERNIERE_MISE_A_JOUR)}))}`),s}function F(e){if(!e)return"";const t=new Date(e);if(Number.isNaN(t.getTime())||t>=I)return"";const n=String(t.getDate()).padStart(2,"0"),o=t.toLocaleDateString(a.cultureFull,{month:"short"});return`${n} ${o} ${t.getFullYear()}`}function Ce(e){if(!e)return"";const t=new Date(e);return Number.isNaN(t.getTime())||t>=I?"":t.toISOString().split("T")[0]}function se(e){if(!e)return"";const t=new Date(e);return Number.isNaN(t.getTime())?String(e):t.toISOString()}function q(e){if(!e)return null;const t=new Date(e).getTime();return Number.isNaN(t)?null:t}function P(e,t){return q(e)??t}function c(e){return String(e??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;")}function b(e){return c(e).replace(/`/g,"&#096;")}function K(e){return String(e??"").replace(/\\/g,"\\\\").replace(/'/g,"\\'")}function we(e){return encodeURIComponent(String(e??"")).replace(/'/g,"%27")}function Ne(){if(typeof confetti!="function")return;const e=2e3,t=Date.now()+e,n={startVelocity:30,spread:360,ticks:60,zIndex:1500},o=(s,i)=>Math.random()*(i-s)+s,r=window.setInterval(()=>{const s=t-Date.now();if(s<=0){window.clearInterval(r);return}const i=50*(s/e);confetti({...n,particleCount:i,origin:{x:o(.1,.3),y:Math.random()-.2}}),confetti({...n,particleCount:i,origin:{x:o(.7,.9),y:Math.random()-.2}})},250)}window.toggleColonne=Te,window.togglePopupTodo=$,window.fermerPopup=C,window.mettreAJourChamp=Z,window.creerNouvelleTache=Se,window.supprimerTodo=ye,window.mettreAJourChampMultiple=Q,window.filtrerResponsables=Ee,window.viderResponsables=ge,window.ajusterTextarea=ee}));

@@ -1,653 +1,1231 @@
-// ========== GLOBAL VARIABLES & DEFAULTS ==========
-/** WidgetSDK object 
- * @type WidgetSDK
-*/
+// ========== KANBAN2 — VERSION REFAITE ==========
+// Compatible avec WidgetSDK 1.2.0.62 et les colonnes Grist RefList.
+
 let W;
-/** Translation function 
- * @type function
-*/
 let T;
 
-/* Widget global variables */
-// let COLONNES_DEFAUT = [
-//     { id: '🖐️ À faire', libelle: 'À faire', couleur: '#f95c5e', btajout: true, isdone: false, useconfetti: false },
-//     { id: '♻️ En cours', libelle: 'En cours', couleur: '#417DC4', btajout: false, isdone: false, useconfetti: false },
-//     { id: '✅ Fait', libelle: 'Fait', couleur: '#27a658', btajout: false, isdone: true, useconfetti: true },
-//     { id: '❌ Annulé', libelle: 'Annulé', couleur: '#301717', btajout: false, isdone: true, useconfetti: false }
-//   ];
 const DEADLINE_PRIORITE = new Date('3000-01-01');
 const BACKCOLOR = '#DCDCDC';
 const TEXTCOLOR = '#000000';
-let RECS;
+
+let RECS = [];
 let TAGSLIST = [];
+let RESPONSABLES = [];
+let RESPONSABLES_BY_ID = new Map();
+let RESPONSABLES_LOADED_FOR = null;
+const RESPONSABLE_SAVE_QUEUES = new Map();
 
-// ========== INITILIZATION ==========
-/** Asynchonous load of the widget */
-window.addEventListener('load', async (event) => {
-    /** Create widget manager object */
+// ========== INITIALISATION ==========
+
+window.addEventListener('load', async () => {
     W = new WidgetSDK();
+    T = await W.loadTranslations(['widget.js']);
 
-    /** Load localization 
-     * Optional but recommended, even only one language is available, let other 
-     * propose their translation easily
-     * In the first argument we list this file and other linked scripts if needed ⇒ this way any use can make his own translation
-     * The second (by default 'en') defines the default language used to write any string in this script. Use iso two letter format if
-     * you write your widget in another default language
-    */
-    T = await W.loadTranslations(['widget.js']); 
+    const lookupDetails = `If empty, the widget uses the column properties (choices or references) to build the list. Otherwise, provide either:\n• A list separated by ";"\n• A table or column reference starting with "$" ($TableID or $TableID.ColumnID)`;
 
-
-    const lookup_details = `If empty, the widget use the column properties (based on choices or references) to make the list. Else, you can either:\n• Provides a list, separated by ";"\n• Provides a reference to a table or a column starting with a "$" ($TableID or $TableID.ColumnID)`;
-    /** Configure options */
     W.configureOptions(
         [
-            /** List all options that need to be stored by Grist 
-             * Two options are possibles, use a short version: 
-             * • WidgetSDK.newItem('option_id', default_value, 'title',  'subtitle', 'group'))
-             *      ⇒ option_id: need to be a unique alpha numeric string with - or _
-             *      ⇒ default_value: the default value assigned to the option, can be any type
-             *      ⇒ title: displayed option title
-             *      ⇒ subtitle: displayed short description
-             *      ⇒ group: can be common to several option to group them together
-             * 
-             * • or provide an object with possible keys:
-             *      ⇒ id: mandatory, need to be a unique alpha numeric string with - or _
-             *      ⇒ default: default value, may defines the type (see below)
-             *      ⇒ title: displayed option title
-             *      ⇒ subtitle: displayed short description
-             *      ⇒ description: displayed long description
-             *      ⇒ group: can be common to several option to group them together
-             *      ⇒ hidden: if true, option will be available on the backend, but not displayed to the user
-             *      ⇒ type: defines which kind of UI is used when options are displayed. If possible type is automatically 
-             *          deduced from default value if possible. 
-             *          Can be: boolean, number, string, longstring, dropdown, object, template, templateform, lookup
-             *      ⇒ values: for dropdown type, defines the displayed list. Can be an Array or Grist column reference
-             *      ⇒ format: function to format the raw value to a more standard type can can be used by the SDK
-             *      ⇒ parse: function to back to a raw value from a formated value
-             *      ⇒ columnId: column ID as defined in grist.ready. If defined and type is not set, set type to dropdown
-             *      ⇒ template: object or array of object that defines a template for a dynamic list of options. Use the same 
-             *          kind of object as for main options, but less keys are usefull:
-             *              id, title, subtitle, description, type, values, format, parse
-             * 
-             * Remark: for Title, subtitle, description and group, do not translate them with T function, the translation will
-             * be automatically managed by the SDK.
-            */
-            WidgetSDK.newItem('columns', null, 'Behavior',  'Configure the behavior of each columns', 'Columns',
+            WidgetSDK.newItem(
+                'columns',
+                null,
+                'Behavior',
+                'Configure the behavior of each column',
+                'Columns',
                 {
-                    columnId:'STATUT',
-                    template:[
-                        WidgetSDK.newItem('addbutton', true, 'Can add card', 'If checked, display a button to add card to the column.'),
-                        WidgetSDK.newItem('isdone',false,'Is done','If checked, cards in the columns are considered as over.'),
-                        WidgetSDK.newItem('useconfetti',false,'Use confetti','If checked, confetti apprear when a card enter in the column.'),
-                        WidgetSDK.newItem('hidecolumn',false,'Hide','If checked, the column is hidden.'),
+                    columnId: 'STATUT',
+                    template: [
+                        WidgetSDK.newItem('addbutton', true, 'Can add card', 'Display a button to add a card.'),
+                        WidgetSDK.newItem('isdone', false, 'Is done', 'Cards in this column are considered completed.'),
+                        WidgetSDK.newItem('useconfetti', false, 'Use confetti', 'Display confetti when a card enters this column.'),
+                        WidgetSDK.newItem('hidecolumn', false, 'Hide', 'Hide this column.')
                     ]
                 }
             ),
-            WidgetSDK.newItem('ref', '', 'References',  'List of task references available.', 'Cards options', 
-                    {description:lookup_details, columnId:'REFERENCE_PROJET', type:'lookup'}),
-            WidgetSDK.newItem('types', '', 'Type', 'List of task types available.', 'Cards options', 
-                    {description:lookup_details, columnId:'TYPE', type:'lookup'}),
-            WidgetSDK.newItem('incharge', '', 'In charge', 'List of people that can be in charge of the task.', 'Cards options', 
-                    {description:lookup_details, columnId:'RESPONSABLE', type:'lookup'}),
-            WidgetSDK.newItem('cardcolor', '', 'Card color', 'List of color available for card background.', 'Cards options', 
-                {description:lookup_details, columnId:'COULEUR', type:'lookup'}),
-            WidgetSDK.newItem('rotation', true, 'Tilt',  'If checked, cards are randomly tilted.', 'Display'),
-            WidgetSDK.newItem('compact', false, 'Compact',  'If checked, use a compact rendering.', 'Display'),
-            WidgetSDK.newItem('readonly', false, 'Read only', 'If checked, kanban is ready only.', 'Display'),
-            WidgetSDK.newItem('hideedit', false, 'Hide editing form', 'If checked, hide the editing form when click on a card.', 'Display'),
-            WidgetSDK.newItem('gristeditcard', false, 'Grist Record Card', 'If checked, opens the grist record card on double click.', 'Display'),
-        ], 
-        '#config-view', // DOM element or ID where insert options interface
-        '#main-view', // DOM element or ID where the widget is encapsuled, used to hide it when option are shown
-        {onOptChange:optionsChanged, onOptLoad:optionsChanged} //even subcription, onOptLoad also available
+            WidgetSDK.newItem(
+                'ref',
+                '',
+                'References',
+                'List of task references available.',
+                'Cards options',
+                {description: lookupDetails, columnId: 'REFERENCE_PROJET', type: 'lookup'}
+            ),
+            WidgetSDK.newItem(
+                'types',
+                '',
+                'Type',
+                'List of task types available.',
+                'Cards options',
+                {description: lookupDetails, columnId: 'TYPE', type: 'lookup'}
+            ),
+            WidgetSDK.newItem(
+                'cardcolor',
+                '',
+                'Card color',
+                'List of colors available for card backgrounds.',
+                'Cards options',
+                {description: lookupDetails, columnId: 'COULEUR', type: 'lookup'}
+            ),
+            WidgetSDK.newItem('rotation', true, 'Tilt', 'Randomly tilt cards.', 'Display'),
+            WidgetSDK.newItem('compact', false, 'Compact', 'Use a compact rendering.', 'Display'),
+            WidgetSDK.newItem('readonly', false, 'Read only', 'Disable all edits.', 'Display'),
+            WidgetSDK.newItem('hideedit', false, 'Hide editing form', 'Do not open the editing form when clicking a card.', 'Display'),
+            WidgetSDK.newItem('gristeditcard', false, 'Grist Record Card', 'Open the Grist record card on double click.', 'Display')
+        ],
+        '#config-view',
+        '#main-view',
+        {onOptChange: optionsChanged, onOptLoad: optionsChanged}
     );
 
-
-    /** Configure Columns meta data 
-     * Optional, but usefull to access many information about table columns configuration.
-     * Mandatory to manage properly Reference and ReferenceList columns
-    */
     W.initMetaData();
 
-    /** Initialize widget subscription to Grist */
     W.ready({
-        requiredAccess: 'full', // can be also 'readonly'
+        requiredAccess: 'full',
         allowSelectBy: true,
         columns: [
-            /** List of object that defines all columns linkable to the widget. Be carefull that
-             * only column linked will be accessible, if you need to access all of them, let the
-             * array empty.
-             * 
-             * Objects can contains keys:
-             *      ⇒ name: unique id. This id is used when you deal with data
-             *      ⇒ title: title displayed by Grist
-             *      ⇒ description: short description displayed by Grist
-             *      ⇒ type: list (comma separated) of column type that can be associated. Any by default, can be:
-             *              Any, Date, DateTime, Numeric, Int, Bool, Choice, Text, Ref, RefList
-             *      ⇒ optional: true if the association is not mandatory for the widget (false by default)
-             *      ⇒ allowMultiple: true if more than one column can be assiciated (false by default)
-             *      ⇒ strictType: true to not allow implicite type conversion (false by default)
-             * 
-             * Remark: for title and description do not translate them with T function, the translation will
-             * be automatically managed by the SDK.
-             */
-            {name:'STATUT', title:'Status', description:'Defines the Kanban column', type:'Choice', strictType:true},
-            {name:'DESCRIPTION', title:'Task', description:'Task name', type:'Any'}, 
-            {name:'DESCRIPTION_DISPLAY', title:'Task Display', description:'Displayed card content (e.g. a formula column adding html)', type:'Any', optional:true}, 
-            {name:'DEADLINE', title:'Deadline', description:'Can also be use as priority', type:'Date', optional:true},             
-            {name:'REFERENCE_PROJET', title:'Reference', description:'Reference associated with the task', type:'Any', optional:true},
-            {name:'TYPE', title:'Type', description:'Type associated with the task', type:'Any', optional:true},              
-            {name:'RESPONSABLE', title:'Responsables', description:'Personnes responsables de la tâche', type:'RefList', strictType:true, optional:true},
-            {name:'CREE_PAR', title:'Created by', type:'Any', optional:true}, 
-            {name:'CREE_LE', title:'Creation date', type:'DateTime', optional:true}, 
-            {name:'DERNIERE_MISE_A_JOUR', title:'Last update date', description:'Updated after any change', type:'DateTime', optional:true},
-            {name:'NOTES', title:'Notes', description:'Additional notes', type:'Any', optional:true},
-            {name:'COULEUR', title:'Card color', description:'Choice or html value', type:'Choice,Text', optional:true},
-            {name:'TAGS', title:'Tags', description:'Additional fields to display', type:'Any', optional:true, allowMultiple:true}
-        ],
-        // async onEditOptions() {
-        //     await W?.showConfig(); // manage the display of options when user click on "Open configuration" in Grist interface
-        // },
+            {name: 'STATUT', title: 'Status', description: 'Defines the Kanban column', type: 'Choice', strictType: true},
+            {name: 'DESCRIPTION', title: 'Task', description: 'Task name', type: 'Any'},
+            {name: 'DESCRIPTION_DISPLAY', title: 'Task Display', description: 'Displayed card content, for example an HTML formula column', type: 'Any', optional: true},
+            {name: 'DEADLINE', title: 'Deadline', description: 'Can also be used as priority', type: 'Date', optional: true},
+            {name: 'REFERENCE_PROJET', title: 'Reference', description: 'Reference associated with the task', type: 'Any', optional: true},
+            {name: 'TYPE', title: 'Type', description: 'Type associated with the task', type: 'Any', optional: true},
+            {name: 'RESPONSABLE', title: 'Responsables', description: 'Personnes responsables de la tâche', type: 'RefList', strictType: true, optional: true},
+            {name: 'CREE_PAR', title: 'Created by', type: 'Any', optional: true},
+            {name: 'CREE_LE', title: 'Creation date', type: 'DateTime', optional: true},
+            {name: 'DERNIERE_MISE_A_JOUR', title: 'Last update date', description: 'Updated after any change', type: 'DateTime', optional: true},
+            {name: 'NOTES', title: 'Notes', description: 'Additional notes', type: 'Any', optional: true},
+            {name: 'COULEUR', title: 'Card color', description: 'Choice or HTML color value', type: 'Choice,Text', optional: true},
+            {name: 'TAGS', title: 'Tags', description: 'Additional fields to display', type: 'Any', optional: true, allowMultiple: true}
+        ]
     });
 
-    /** Subscribe to Grist onRecords with a correct loading management 
-     * (ensure that options are loaded before, widget is properly initialized...)
-     *      ⇒ main: function that managed the widget when records are updated
-     *      ⇒ args: object with same option as grist.onRecords + mapRef key. 
-     *              • mapRef: By default references are not managed and their content depends on expandRefs and keepEncoded.
-     *                  If mapRef is true, all references are mapped to provide their content AND their id
-     *              • For optimization, prefer {expandRefs:false, keepEncoded:false} if working with ref ids, 
-     *                  or {expandRefs:true, keepEncoded:false} if working with ref content
-     */
-    W.onRecords(afficherKanban, {expandRefs:false, keepEncoded:false, mapRef:true});
+    // mapRef:true fournit deux valeurs :
+    // - RESPONSABLE : libellés visibles
+    // - RESPONSABLE_id : identifiants des lignes référencées
+    W.onRecords(afficherKanban, {
+        expandRefs: false,
+        keepEncoded: false,
+        mapRef: true
+    });
 
-    /** When all configurations have been loaded, proceed to widget initialization.
-     * This way, it ensures that all information are available to render your widget
-      */
     W.isLoaded().then(async () => {
-        /** Below put your widget initilization code */
-
-        /** Allways end with this line, to let the widget accepts data from Grist,
-         * else, main function in W.onRecords will be never called.
-         */
         W.initDone = true;
     });
 
-    /** Trigger event when mapping (ie columns properties) is changed */
-    grist.on('message', async (e) => {
-        if (e.mappingsChange) mappingChanged();
+    grist.on('message', async (event) => {
+        if (event.mappingsChange) {
+            await mappingChanged();
+        }
     });
 });
 
-// ========== WIDGET MANAGEMENT ==========
-/** Main widget function, render the widget after each update on records
- * @param {*} recs - Mapped records, which means that value are accessible using IDs defines in columns on grist.ready()
-  */
-async function afficherKanban(recs) {
-    RECS = recs;
+// ========== CHARGEMENT DES DONNÉES DE RÉFÉRENCE ==========
 
-    /** Place here the codes that update your widget each time the records */
-    const conteneurKanban = document.getElementById('conteneur-kanban');
-    conteneurKanban.innerHTML = '';
-
-    // Création des colonnes //TODO => move to init and option change
-    const colonnes = await W.col.STATUT.getChoices();
-    if (!colonnes || colonnes.length === 0) {
-        console.error(T('No choice available in the Status column'));
+async function chargerResponsables(force = false) {
+    if (!W?.map?.RESPONSABLE || !W?.col?.RESPONSABLE) {
+        viderCacheResponsables();
         return;
     }
-    //W.opt.colonnes
-    let newcol;
-    colonnes.forEach((col, idx) => {
-        newcol = creerColonneKanban(col, idx);
-        if (newcol != null) conteneurKanban.appendChild(newcol);
-    });
 
-    // Distribution des tâches dans les colonnes
-    if (recs?.length > 0) {
-        recs.forEach( todo => {
-            const carte = creerCarteTodo(todo);
-            const col = document.querySelector(`.contenu-colonne[data-statut="${todo.STATUT}"]`);
-            if (col) {
-              // Insertion au début de la colonne
-              col.insertBefore(carte, col.firstChild);
-            }
-          });
+    const colMeta = W.col.RESPONSABLE;
+    const [kind, tableId] = String(colMeta.type || '').split(':');
 
+    if (kind !== 'RefList' || !tableId || !colMeta.visibleCol) {
+        viderCacheResponsables();
+        return;
+    }
 
-        // Configuration du drag & drop et mise à jour des compteurs
-        if(!W.opt.readonly) {
-            document.querySelectorAll('.contenu-colonne').forEach(colonne => {
-                // Configuration de Sortable pour le drag & drop
-                new Sortable(colonne, {
-                    group: 'kanban-todo',
-                    animation: 150,
-                    onEnd: async function(evt) {
-                        const colonneArrivee = evt.to.dataset.statut;
-                        // Déplacé dans la même colonne
-                        if (colonneArrivee === evt.from.dataset.statut) {
-                            if (W.map.DEADLINE) { //if not mapped, no odering within a column
-                                let deadline = evt.item.dataset.deadline || '9999-12-31';
+    const cacheKey = `${tableId}:${colMeta.visibleCol}`;
+    if (!force && RESPONSABLES_LOADED_FOR === cacheKey && RESPONSABLES.length > 0) {
+        return;
+    }
 
-                                if (evt.oldIndex !== evt.newIndex && (new Date(deadline)) >= DEADLINE_PRIORITE) {
-                                    let start = DEADLINE_PRIORITE.getFullYear();              
-                                    let data = [];
-                                    document.querySelectorAll('.contenu-colonne').forEach(colonne => { 
-                                        if (colonne.getAttribute('data-statut') === colonneArrivee) {
-                                            colonne.querySelectorAll('.carte').forEach(async carte => { 
-                                                deadline = carte.getAttribute('data-deadline') || '9999-12-31';
-                                                if ((new Date(deadline)) >= DEADLINE_PRIORITE) {
-                                                    deadline = `${start}-01-01`;
-                                                    carte.setAttribute('data-deadline', deadline);
-                                                    start += 1;
-                                                
-                                                    data.push(W.formatRecord(carte.getAttribute('data-todo-id'), {DEADLINE: deadline}));
-                                                }
-                                            });
-                                        }
-                                    }); 
-                                    
-                                    try {
-                                        await W.updateRecords(data);
-                                    } catch (erreur) {
-                                        console.error(T('Error during status update:'), erreur);
-                                    }
-                                }   
-                            }                                         
-                        } else {
-                            try {
-                                await mettreAJourChamp(evt.item.dataset.todoId, 'STATUT', colonneArrivee);
-                            } catch (erreur) {
-                                console.error(T('Error during status update:'), erreur);
-                            }
-                        } 
-                        
-                        // Tri des cartes dans chaque colonne
-                        trierTodo(colonne);
-                    }
-                });
+    try {
+        const [table, visibleMeta] = await Promise.all([
+            grist.docApi.fetchTable(tableId),
+            colMeta.getMeta(colMeta.visibleCol)
+        ]);
 
-                // Tri des cartes dans chaque colonne
-                trierTodo(colonne);
-              });
-        }
+        const visibleColumnId = visibleMeta?.colId;
+        const ids = Array.isArray(table?.id) ? table.id : [];
+        const labels = visibleColumnId && Array.isArray(table?.[visibleColumnId])
+            ? table[visibleColumnId]
+            : [];
 
-        // Mise à jour des compteurs
-        document.querySelectorAll('.colonne-kanban').forEach(mettreAJourCompteur);
+        const rows = ids
+            .map((rowId, index) => {
+                const id = Number(rowId);
+                const rawLabel = labels[index];
+                const label = rawLabel === null || rawLabel === undefined
+                    ? ''
+                    : String(rawLabel).trim();
+
+                return {id, label};
+            })
+            .filter((person) => Number.isInteger(person.id) && person.id > 0 && person.label && person.label !== '#KeyError')
+            .sort((a, b) => a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'}));
+
+        RESPONSABLES = rows;
+        RESPONSABLES_BY_ID = new Map(rows.map((person) => [person.id, person]));
+        RESPONSABLES_LOADED_FOR = cacheKey;
+    } catch (error) {
+        viderCacheResponsables();
+        console.error('Impossible de charger la table des responsables :', error);
     }
 }
 
-/** Function called when options are updated.
- * @param {Object} opts - Options values with ids as keys
- */
-async function optionsChanged(opts) {    
-    /** If you don't need mapping to be done before managing options change, you can remove this line */
-    await W.isMapped();
-
-    /** Place here the code that update your widget each time option are changed */
-    afficherKanban(RECS);
+function viderCacheResponsables() {
+    RESPONSABLES = [];
+    RESPONSABLES_BY_ID = new Map();
+    RESPONSABLES_LOADED_FOR = null;
 }
 
-/** Place here all the code and function related to the widget rendering and management */
-
-// ========== CRÉATION DES CARTES ET COLONNES ==========
-/* Création d'une colonne */
-function creerColonneKanban(colonne, idx) {
-    const opt = W.opt.columns[idx];
-
-    // Should be hidden ?
-    if (opt.hidecolumn) return null;
-
-    const colonneElement = document.createElement('div');
-    colonneElement.className = `colonne-kanban${(!opt.addbutton && !W.opt.compact)? ' colonne-nobouton':''}`; //colonne
-    colonneElement.id = colonne;
-    
-    const savedState = localStorage.getItem(`column-todo-${colonne}`); //colonne.libelle
-    if (savedState === 'true') {
-        colonneElement.classList.add('collapsed');
-    }
-
-    colonneElement.innerHTML = `
-        <div class="entete-colonne" style="background-color: ${W.col.STATUT.getColor(colonne) ?? BACKCOLOR};color:${W.col.STATUT.getTextColor(colonne) ?? TEXTCOLOR}">
-            <div class="titre-statut">${colonne} <span class="compteur-colonne">(0)</span></div>
-            ${(opt.addbutton && !W.opt.readonly) ? `
-            <button class="bouton-ajouter-entete ${W.opt.compact ? ' compact': ''}" onclick="creerNouvelleTache('${colonne}')">+</button>
-            ` : ''}
-            <button class="bouton-toggle" onclick="toggleColonne(this.closest('.colonne-kanban'), event)">⇄</button>
-        </div>
-        ${(opt.addbutton && !W.opt.readonly) ? `
-            <button class="bouton-ajouter ${W.opt.compact ? ' compact': ''}" onclick="creerNouvelleTache('${colonne}')">+ ${T('Add a new task')}</button>
-        ` : ''}
-        <div class="contenu-colonne" data-statut="${colonne}"></div>
-    `;
-  
-    return colonneElement;
-}
-
-/** Called when STATUT column perperties are modified */
-function mappingChanged() {
-    // Update column color
-    const colonnes = document.getElementsByClassName('colonne-kanban');
-    Array.prototype.forEach.call(colonnes, col => {
-        col.style = `background-color: ${W.col.STATUT.getColor(col.id) ?? BACKCOLOR};color:${W.col.STATUT.getTextColor(col.id) ?? TEXTCOLOR}`;
-    });
-
-    updateTagsList();    
-}
-
-/** Update lists for each Tags columns */
 async function updateTagsList() {
     await W.isMapped();
-
-    // make TAGS lists
     TAGSLIST = [];
-    if (W.map.TAGS) {
-        TAGSLIST = await W.map.TAGS.map(async t => {
-            const cmeta = await W.meta.getColMeta(t);
-            return await cmeta?.getChoices() ?? [];
-        });
-        TAGSLIST = await Promise.all(TAGSLIST);
-    }
-}
 
-/* Création d'une carte TODO */
-function creerCarteTodo(todo) { 
-    const carte = document.createElement('div');
-    carte.className =`carte ${W.opt.rotation ? '': ' norotate'}${W.opt.compact ? ' compact': ''}`;
-    
-    carte.setAttribute('data-todo-id', todo.id);
-    carte.setAttribute('data-last-update', todo.DERNIERE_MISE_A_JOUR || '');
-    carte.setAttribute('data-deadline', todo.DEADLINE || '');
-    if (todo.COULEUR) {
-        if (W.col.COULEUR.type === 'Choice')
-            if (W.col.COULEUR.getColor(todo.COULEUR)) carte.setAttribute('style', `background-color: ${W.col.COULEUR.getColor(todo.COULEUR)}`);
-        else
-            carte.setAttribute('style', `background-color: ${(todo.COULEUR.startsWith("#")? '': '#') + todo.COULEUR}`);        
+    const mappedTags = normaliserTableau(W.map?.TAGS);
+    if (mappedTags.length === 0) {
+        return;
     }
 
-    const type = todo.TYPE || '';
-    const description = todo.DESCRIPTION_DISPLAY || todo.DESCRIPTION || T('No description');
-    const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
-    const responsables = (
-    Array.isArray(todo.RESPONSABLE)
-        ? todo.RESPONSABLE
-        : todo.RESPONSABLE
-            ? [todo.RESPONSABLE]
-            : []
-)
-    .map(String)
-    .filter(responsable =>
-        responsable &&
-        responsable !== '#KeyError'
-    );
-
-const premierResponsable = responsables[0];
-
-const responsablesHtml = premierResponsable
-    ? `
-        <span class="responsable-badge">
-            ${echapperHtml(premierResponsable)}
-        </span>
-
-        ${responsables.length > 1
-            ? `<span class="responsable-badge responsable-plus">+${responsables.length - 1}</span>`
-            : ''
-        }
-    `
-    : '';
-    const projetRef = todo.REFERENCE_PROJET;
-    const tags = todo.TAGS || [];
-
-    let taglist= '';
-    tags.forEach(t => taglist += t?`<div class="more-tag">${t}</div>`:'');
-    const infoColonne = W.getValueListOption('columns', todo.STATUT); //.find((colonne) => {return colonne.id === todo.STATUT});
-
-    carte.innerHTML = `
-    ${projetRef && projetRef.length > 0 ? `<div class="projet-ref truncate">#${projetRef}</div>` : ''}
-    ${type ? `<div class="type-tag truncate">${type}</div>` : (projetRef && projetRef.length > 0 ? '<div>&nbsp;</div>':'')}
-    ${tags.length > 0 ? `<div>${taglist}</div>`:''}
-    <div class="description">${description}</div>
-    ${deadline ? `<div class="deadline${todo.DEADLINE < Date.now() ? ' late':''} truncate">📅 ${deadline}</div>` : (responsables.length ? '<div>&nbsp;</div>':'')}
-    ${responsables.length ? `<div class="responsables-list">${responsablesHtml}</div>` : ''}
-    ${infoColonne?.isdone ? `<div class="tampon-termine" style="color: ${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${todo.STATUT}</div>` : ''}      
-`;
-  
-    carte.addEventListener('click', () => {
-        grist.setCursorPos({rowId: todo.id});
-        if(!W.opt.hideedit) togglePopupTodo(todo);
-    });
-    
-    carte.addEventListener('dblclick', () => {
-        grist.setCursorPos({rowId: todo.id});
-        if(W.opt.gristeditcard) grist.commandApi.run('viewAsCard');
-        else if(!W.opt.hideedit) togglePopupTodo(todo);
-    });
-    return carte;
-}
-
-/* Mise à jour d'un champ dans Grist */
-async function mettreAJourChamp(todoId, champ, valeur, e) {
-    try {
-        e?.stopPropagation();
-        // Déclencher les confettis si on passe en "Fait"
-        if (champ === 'STATUT') {
-            const infoColonne = W.getValueListOption('columns', valeur); //.find((colonne) => {return colonne.id === valeur});
-            if (infoColonne && infoColonne.useconfetti)
-                triggerConfetti();
-        }
-        let data = {[champ]: valeur ? valeur : undefined};
-        if (W.map.DERNIERE_MISE_A_JOUR) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
-
-        await W.updateRecords(W.formatRecord(todoId, data));
-    } catch (erreur) {
-        console.error(T('Error during update:'), erreur);
-    }
-}
-
-/* Tri des cartes */
-function trierTodo(conteneur) { 
-    const cartes = Array.from(conteneur.children);
-    const colonne = conteneur.dataset.isdone;
-    
-    cartes.sort((a, b) => {
-        let delta = 0;
-        if (W.map.DEADLINE) {
-            if (colonne) {
-                // Pour les colonnes Fait et Annulé, tri par date de dernière mise à jour
-                const dateA = a.getAttribute('data-last-update') || '1970-01-01';
-                const dateB = b.getAttribute('data-last-update') || '1970-01-01';
-                delta = new Date(dateB) - new Date(dateA); // Plus récent en premier            
-            } else {
-                // Pour les autres colonnes, tri par deadline
-                const dateA = a.getAttribute('data-deadline') || '9999-12-31';
-                const dateB = b.getAttribute('data-deadline') || '9999-12-31';
-                delta = new Date(dateA) - new Date(dateB); // Plus urgent en premier
+    TAGSLIST = await Promise.all(
+        mappedTags.map(async (columnId) => {
+            try {
+                const meta = await W.meta.getColMeta(columnId);
+                return await meta?.getChoices() ?? [];
+            } catch (error) {
+                console.warn(`Impossible de charger les choix de ${columnId}`, error);
+                return [];
             }
-        }        
-
-        if (delta === 0) {
-            const idA = parseInt(a.getAttribute('data-todo-id')) || 0;
-            const idB = parseInt(b.getAttribute('data-todo-id')) || 0;
-            return idA - idB;
-        }
-        else 
-            return delta; 
-    });
-    
-    cartes.forEach(carte => conteneur.appendChild(carte));
+        })
+    );
 }
 
-/* Mise à jour des compteurs */
-function mettreAJourCompteur(colonne) {
-    const contenu = colonne.querySelector('.contenu-colonne');
-    const compteur = colonne.querySelector('.compteur-colonne');
-    if (contenu && compteur) {
-        compteur.textContent = `(${contenu.children.length})`;
+// ========== RENDU DU KANBAN ==========
+
+async function afficherKanban(records) {
+    RECS = Array.isArray(records) ? records : [];
+
+    await Promise.all([
+        chargerResponsables(),
+        updateTagsList()
+    ]);
+
+    const container = document.getElementById('conteneur-kanban');
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+
+    const statuses = await W.col.STATUT.getChoices();
+    if (!Array.isArray(statuses) || statuses.length === 0) {
+        container.innerHTML = `<div class="kanban-message">${echapperHtml(T('No choice available in the Status column'))}</div>`;
+        return;
+    }
+
+    statuses.forEach((status, index) => {
+        const column = creerColonneKanban(status, index);
+        if (column) {
+            container.appendChild(column);
+        }
+    });
+
+    RECS.forEach((todo) => {
+        const status = String(todo.STATUT ?? '');
+        const target = Array.from(container.querySelectorAll('.contenu-colonne'))
+            .find((column) => column.dataset.statut === status);
+
+        if (target) {
+            target.insertBefore(creerCarteTodo(todo), target.firstChild);
+        }
+    });
+
+    initialiserTriEtGlisserDeposer();
+    document.querySelectorAll('.colonne-kanban').forEach(mettreAJourCompteur);
+}
+
+async function optionsChanged() {
+    await W.isMapped();
+    await afficherKanban(RECS);
+}
+
+async function mappingChanged() {
+    viderCacheResponsables();
+    await chargerResponsables(true);
+    await updateTagsList();
+    await afficherKanban(RECS);
+}
+
+function creerColonneKanban(status, index) {
+    const option = getColumnOption(index);
+    if (option.hidecolumn) {
+        return null;
+    }
+
+    const statusText = String(status);
+    const column = document.createElement('section');
+    column.className = `colonne-kanban${(!option.addbutton && !W.opt.compact) ? ' colonne-nobouton' : ''}`;
+    column.id = statusText;
+
+    const storageKey = getColumnStorageKey(statusText);
+    if (localStorage.getItem(storageKey) === 'true') {
+        column.classList.add('collapsed');
+    }
+
+    const background = W.col.STATUT.getColor(statusText) ?? BACKCOLOR;
+    const color = W.col.STATUT.getTextColor(statusText) ?? TEXTCOLOR;
+    const escapedStatus = echapperHtml(statusText);
+    const encodedStatus = encoderAttribut(statusText);
+
+    column.innerHTML = `
+        <div class="entete-colonne" style="background-color:${background};color:${color}">
+            <div class="titre-statut">${escapedStatus} <span class="compteur-colonne">(0)</span></div>
+            <div class="actions-colonne">
+                ${(option.addbutton && !W.opt.readonly)
+                    ? `<button type="button" class="bouton-ajouter-entete ${W.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))" aria-label="${echapperHtml(T('Add a new task'))}">+</button>`
+                    : ''}
+                <button type="button" class="bouton-toggle" onclick="toggleColonne(this.closest('.colonne-kanban'), event)" aria-label="Replier ou déplier">⇄</button>
+            </div>
+        </div>
+        ${(option.addbutton && !W.opt.readonly)
+            ? `<button type="button" class="bouton-ajouter ${W.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))">+ ${echapperHtml(T('Add a new task'))}</button>`
+            : ''}
+        <div class="contenu-colonne" data-statut="${echapperAttribut(statusText)}" data-isdone="${option.isdone ? 'true' : 'false'}"></div>
+    `;
+
+    return column;
+}
+
+function creerCarteTodo(todo) {
+    const card = document.createElement('article');
+    card.className = `carte${W.opt.rotation ? '' : ' norotate'}${W.opt.compact ? ' compact' : ''}`;
+    card.dataset.todoId = String(todo.id);
+    card.dataset.lastUpdate = serialiserDate(todo.DERNIERE_MISE_A_JOUR);
+    card.dataset.deadline = serialiserDate(todo.DEADLINE);
+
+    appliquerCouleurCarte(card, todo.COULEUR);
+
+    const type = valeurTexte(todo.TYPE);
+    const projectRef = valeurTexte(todo.REFERENCE_PROJET);
+    const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
+    const responsables = obtenirLibellesResponsables(todo);
+    const tags = normaliserTableau(todo.TAGS)
+        .flatMap((value) => normaliserTableau(value))
+        .map(valeurTexte)
+        .filter(Boolean);
+
+    const description = todo.DESCRIPTION_DISPLAY
+        ? String(todo.DESCRIPTION_DISPLAY)
+        : echapperHtml(valeurTexte(todo.DESCRIPTION) || T('No description'));
+
+    const responsablesHtml = responsables
+        .map((responsable) => `<span class="responsable-badge">${echapperHtml(responsable)}</span>`)
+        .join('');
+
+    const tagsHtml = tags
+        .map((tag) => `<span class="more-tag">${echapperHtml(tag)}</span>`)
+        .join('');
+
+    const columnOption = getColumnOptionByStatus(todo.STATUT);
+    const deadlineTimestamp = toTimestamp(todo.DEADLINE);
+    const isLate = deadlineTimestamp !== null && deadlineTimestamp < Date.now() && deadlineTimestamp < DEADLINE_PRIORITE.getTime();
+
+    card.innerHTML = `
+        ${projectRef ? `<div class="projet-ref truncate">#${echapperHtml(projectRef)}</div>` : ''}
+        ${type
+            ? `<div class="type-tag truncate">${echapperHtml(type)}</div>`
+            : (projectRef ? '<div class="card-spacer">&nbsp;</div>' : '')}
+        ${tagsHtml ? `<div class="tags-list">${tagsHtml}</div>` : ''}
+        <div class="description">${description}</div>
+        ${deadline
+            ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>`
+            : (responsables.length ? '<div class="card-spacer">&nbsp;</div>' : '')}
+        ${responsables.length ? `<div class="responsables-list">${responsablesHtml}</div>` : ''}
+        ${columnOption?.isdone
+            ? `<div class="tampon-termine" style="color:${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${echapperHtml(valeurTexte(todo.STATUT))}</div>`
+            : ''}
+    `;
+
+    card.addEventListener('click', () => {
+        grist.setCursorPos({rowId: todo.id});
+        if (!W.opt.hideedit) {
+            togglePopupTodo(todo);
+        }
+    });
+
+    card.addEventListener('dblclick', () => {
+        grist.setCursorPos({rowId: todo.id});
+        if (W.opt.gristeditcard) {
+            grist.commandApi.run('viewAsCard');
+        } else if (!W.opt.hideedit) {
+            togglePopupTodo(todo);
+        }
+    });
+
+    return card;
+}
+
+function appliquerCouleurCarte(card, rawColor) {
+    if (!rawColor || !W.map?.COULEUR || !W.col?.COULEUR) {
+        return;
+    }
+
+    let color = '';
+    if (W.col.COULEUR.type === 'Choice') {
+        color = W.col.COULEUR.getColor(rawColor) || '';
+    } else {
+        const candidate = String(rawColor).trim();
+        if (/^#?[0-9a-f]{3,8}$/i.test(candidate)) {
+            color = candidate.startsWith('#') ? candidate : `#${candidate}`;
+        } else if (/^[a-z]+$/i.test(candidate)) {
+            color = candidate;
+        }
+    }
+
+    if (color) {
+        card.style.backgroundColor = color;
     }
 }
 
-// ========== GESTION DU POPUP ==========
-/* Affichage et gestion du popup */
+function initialiserTriEtGlisserDeposer() {
+    document.querySelectorAll('.contenu-colonne').forEach((column) => {
+        trierTodo(column);
+
+        if (W.opt.readonly || typeof Sortable !== 'function') {
+            return;
+        }
+
+        new Sortable(column, {
+            group: 'kanban-todo',
+            animation: 150,
+            ghostClass: 'carte-fantome',
+            chosenClass: 'carte-selectionnee',
+            onEnd: async (event) => {
+                const targetStatus = event.to.dataset.statut;
+                const sourceStatus = event.from.dataset.statut;
+                const cardId = event.item.dataset.todoId;
+
+                try {
+                    if (targetStatus !== sourceStatus) {
+                        await mettreAJourChamp(cardId, 'STATUT', targetStatus);
+                    } else if (event.oldIndex !== event.newIndex) {
+                        await mettreAJourOrdreParDeadline(event.to);
+                    }
+                } catch (error) {
+                    console.error(T('Error during status update:'), error);
+                    await afficherKanban(RECS);
+                }
+
+                trierTodo(event.to);
+                mettreAJourCompteur(event.to.closest('.colonne-kanban'));
+                if (event.from !== event.to) {
+                    mettreAJourCompteur(event.from.closest('.colonne-kanban'));
+                }
+            }
+        });
+    });
+}
+
+async function mettreAJourOrdreParDeadline(column) {
+    if (!W.map?.DEADLINE) {
+        return;
+    }
+
+    const cards = Array.from(column.querySelectorAll('.carte'));
+    const movedCards = cards.filter((card) => {
+        const timestamp = toTimestamp(card.dataset.deadline);
+        return timestamp === null || timestamp >= DEADLINE_PRIORITE.getTime();
+    });
+
+    if (movedCards.length === 0) {
+        return;
+    }
+
+    let year = DEADLINE_PRIORITE.getFullYear();
+    const records = movedCards.map((card) => {
+        const deadline = `${year}-01-01`;
+        year += 1;
+        card.dataset.deadline = deadline;
+        return W.formatRecord(card.dataset.todoId, {DEADLINE: deadline});
+    });
+
+    await W.updateRecords(records);
+}
+
+function trierTodo(container) {
+    if (!container) {
+        return;
+    }
+
+    const isDone = container.dataset.isdone === 'true';
+    const cards = Array.from(container.children);
+
+    cards.sort((a, b) => {
+        let delta = 0;
+
+        if (W.map?.DEADLINE) {
+            if (isDone) {
+                delta = toSortableTimestamp(b.dataset.lastUpdate, 0) - toSortableTimestamp(a.dataset.lastUpdate, 0);
+            } else {
+                delta = toSortableTimestamp(a.dataset.deadline, Number.MAX_SAFE_INTEGER)
+                    - toSortableTimestamp(b.dataset.deadline, Number.MAX_SAFE_INTEGER);
+            }
+        }
+
+        if (delta !== 0) {
+            return delta;
+        }
+
+        return (Number(a.dataset.todoId) || 0) - (Number(b.dataset.todoId) || 0);
+    });
+
+    cards.forEach((card) => container.appendChild(card));
+}
+
+function mettreAJourCompteur(column) {
+    if (!column) {
+        return;
+    }
+
+    const content = column.querySelector('.contenu-colonne');
+    const counter = column.querySelector('.compteur-colonne');
+    if (content && counter) {
+        counter.textContent = `(${content.children.length})`;
+    }
+}
+
+// ========== FORMULAIRE LATÉRAL ==========
+
 function togglePopupTodo(todo) {
     const popup = document.getElementById('popup-todo');
-    const carteActive = document.querySelector('.carte.active');
-    const carteCliquee = document.querySelector(`[data-todo-id="${todo.id}"]`);
-    const infoColonne = W.getValueListOption('columns', todo.STATUT); //.find((colonne) => {return colonne.id === todo.STATUT});
+    if (!popup) {
+        return;
+    }
 
-    if (W.opt.readonly) { 
+    if (W.opt.readonly) {
         fermerPopup();
         return;
     }
 
-    carteActive?.classList.remove('active');
-    carteCliquee?.classList.add('active');
+    document.querySelector('.carte.active')?.classList.remove('active');
+    trouverCarteParId(todo.id)?.classList.add('active');
 
-    popup.style = `border-left-color: ${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR}`;
+    const columnOption = getColumnOptionByStatus(todo.STATUT);
+    const background = W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR;
+    const color = W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR;
 
-    popup.dataset.statut = todo.STATUT;
-    popup.dataset.isdone = infoColonne? false : infoColonne.isdone;
-    popup.dataset.currentTodo = todo.id;
-    
-    const popupTitle = popup.querySelector('.popup-title');
+    popup.style.borderLeftColor = background;
+    popup.dataset.statut = valeurTexte(todo.STATUT);
+    popup.dataset.isdone = columnOption?.isdone ? 'true' : 'false';
+    popup.dataset.currentTodo = String(todo.id);
+
+    const title = popup.querySelector('.popup-title');
     const content = popup.querySelector('.popup-content');
-    const popupheader = popup.querySelector('.popup-header');
-    popupheader.style = `background-color: ${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};color:${W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR}`;
-    const popupclose = popup.querySelector('.bouton-fermer');
-    popupclose.style =  `color:${W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR}`;
-    
-    popupTitle.textContent = todo.DESCRIPTION || T('New task');
+    const header = popup.querySelector('.popup-header');
+    const closeButton = popup.querySelector('.bouton-fermer');
 
-    let count = 1;
-    let form = '<div class="field-row">';
-    if (W.map.DEADLINE) {
-        form += `
+    if (title) {
+        title.textContent = valeurTexte(todo.DESCRIPTION) || T('New task');
+    }
+    if (header) {
+        header.style.backgroundColor = background;
+        header.style.color = color;
+    }
+    if (closeButton) {
+        closeButton.style.color = color;
+    }
+    if (!content) {
+        return;
+    }
+
+    const topFields = [];
+
+    if (W.map?.DEADLINE) {
+        topFields.push(`
             <div class="field">
-            <label class="field-label">${W.map.DEADLINE}</label>
-            <input type="date" class="field-input" 
-                    value="${formatDateForInput(todo.DEADLINE)}"
-                    onchange="mettreAJourChamp(${todo.id}, 'DEADLINE', this.value, event)">
+                <label class="field-label">${echapperHtml(W.map.DEADLINE)}</label>
+                <input
+                    type="date"
+                    class="field-input"
+                    value="${echapperAttribut(formatDateForInput(todo.DEADLINE))}"
+                    onchange="mettreAJourChamp(${Number(todo.id)}, 'DEADLINE', this.value || null, event)"
+                    ${W.col.DEADLINE.getIsFormula() ? 'disabled' : ''}
+                >
             </div>
-        `;
-    }    
-
-    if (W.map.REFERENCE_PROJET) {
-        form += insererChamp(todo.id, todo.REFERENCE_PROJET, W.valuesList.ref, W.map.REFERENCE_PROJET, 'REFERENCE_PROJET', W.col.REFERENCE_PROJET.getIsFormula()); 
-        count += 1;
-    }
-    if (count % 2 === 0) form += `</div><div class="field-row">`;
-    if (W.map.TYPE) {
-        form += insererChamp(todo.id, todo.TYPE, W.valuesList.types, W.map.TYPE, 'TYPE', W.col.TYPE.getIsFormula());
-        count += 1; 
-    }
-    if (count % 2 === 0) form += `</div><div class="field-row">`;
-    if (W.map.RESPONSABLE) {
-        form += insererChampMultiple(todo.id, todo.RESPONSABLE, W.valuesList.incharge, W.map.RESPONSABLE, 'RESPONSABLE', W.col.RESPONSABLE.getIsFormula());
-        count += 1;   
-    }
-    if (count % 2 === 0) form += `</div><div class="field-row">`;
-    if (W.map.TAGS) {
-        W.map.TAGS.forEach((t, i) => {
-            form += insererChamp(todo.id, todo.TAGS[i], TAGSLIST[i], t, t, W.col.TAGS[i].getIsFormula());
-            count += 1;
-            if (count % 2 === 0) form += `</div><div class="field-row">`;
-        });
-    }
-    if (W.map.COULEUR) {
-        form += insererChamp(todo.id, todo.COULEUR, W.valuesList.cardcolor, W.map.COULEUR, 'COULEUR'), W.col.COULEUR.getIsFormula();
-        count += 1;   
+        `);
     }
 
-    form += `</div>
+    if (W.map?.REFERENCE_PROJET) {
+        topFields.push(insererChamp(
+            todo.id,
+            todo.REFERENCE_PROJET,
+            W.valuesList.ref,
+            W.map.REFERENCE_PROJET,
+            'REFERENCE_PROJET',
+            W.col.REFERENCE_PROJET.getIsFormula()
+        ));
+    }
+
+    if (W.map?.TYPE) {
+        topFields.push(insererChamp(
+            todo.id,
+            todo.TYPE,
+            W.valuesList.types,
+            W.map.TYPE,
+            'TYPE',
+            W.col.TYPE.getIsFormula()
+        ));
+    }
+
+    if (W.map?.RESPONSABLE) {
+        topFields.push(insererChampMultiple(
+            todo.id,
+            obtenirIdsResponsables(todo),
+            W.map.RESPONSABLE,
+            W.col.RESPONSABLE.getIsFormula()
+        ));
+    }
+
+    const mappedTags = normaliserTableau(W.map?.TAGS);
+    const tagMetas = normaliserTableau(W.col?.TAGS);
+    const todoTags = normaliserTableau(todo.TAGS);
+    mappedTags.forEach((mappedTag, index) => {
+        topFields.push(insererChamp(
+            todo.id,
+            todoTags[index],
+            TAGSLIST[index],
+            mappedTag,
+            mappedTag,
+            tagMetas[index]?.getIsFormula?.() ?? false
+        ));
+    });
+
+    if (W.map?.COULEUR) {
+        topFields.push(insererChamp(
+            todo.id,
+            todo.COULEUR,
+            W.valuesList.cardcolor,
+            W.map.COULEUR,
+            'COULEUR',
+            W.col.COULEUR.getIsFormula()
+        ));
+    }
+
+    const rowsHtml = [];
+    for (let index = 0; index < topFields.length; index += 2) {
+        rowsHtml.push(`<div class="field-row">${topFields[index]}${topFields[index + 1] || ''}</div>`);
+    }
+
+    const descriptionValue = echapperHtml(valeurTexte(todo.DESCRIPTION));
+    const notesValue = echapperHtml(valeurTexte(todo.NOTES));
+
+    let form = rowsHtml.join('');
+    form += `
         <div class="field">
-            <label class="field-label">${W.map.DESCRIPTION}</label>
-            <textarea class="field-textarea auto-expand" 
-                    onchange="mettreAJourChamp(${todo.id}, 'DESCRIPTION', this.value, event)"
-                    oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'">${todo.DESCRIPTION || ''}</textarea>
+            <label class="field-label">${echapperHtml(W.map.DESCRIPTION)}</label>
+            <textarea
+                class="field-textarea auto-expand"
+                onchange="mettreAJourChamp(${Number(todo.id)}, 'DESCRIPTION', this.value, event)"
+                oninput="ajusterTextarea(this)"
+            >${descriptionValue}</textarea>
         </div>
     `;
-    if (W.map.NOTES) {
-        form += `<div class="field">
-            <label class="field-label">${W.map.NOTES}</label>
-            <textarea class="field-textarea auto-expand" 
-                      onchange="mettreAJourChamp(${todo.id}, 'NOTES', this.value, event)"
-                      oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'">${todo.NOTES || ''}</textarea>
-          </div>
-        `;
-    }
-    if ((W.map.CREE_LE && todo.CREE_LE) || (W.map.CREE_PAR && todo.CREE_PAR) || (W.map.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR)) {
-        form += `<div class="info-creation">
-                ${T('Created')} ${(W.map.CREE_LE && todo.CREE_LE) ? T('on %on', {on:formatDate(todo.CREE_LE)}): ''} 
-                ${(W.map.CREE_PAR && todo.CREE_PAR) ? T('by %by', {by:(todo.CREE_PAR || '-')}): ''}
-                ${(W.map.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR) ? ('<br>' + T('Last update on %on', {on:(formatDate(todo.DERNIERE_MISE_A_JOUR) || '-')})): ''}
+
+    if (W.map?.NOTES) {
+        form += `
+            <div class="field">
+                <label class="field-label">${echapperHtml(W.map.NOTES)}</label>
+                <textarea
+                    class="field-textarea auto-expand"
+                    onchange="mettreAJourChamp(${Number(todo.id)}, 'NOTES', this.value, event)"
+                    oninput="ajusterTextarea(this)"
+                    ${W.col.NOTES.getIsFormula() ? 'disabled' : ''}
+                >${notesValue}</textarea>
             </div>
         `;
     }
 
-    if (!W.opt.readonly) {
-        form += ` 
-          <div class="popup-actions">
-            <button class="popup-action-button bouton-supprimer" onclick="supprimerTodo(${todo.id}, event)" 
-                    title="${T('Remove the task')}">🗑️</button>
-          </div>
-        `;
+    const creationInfo = construireInfoCreation(todo);
+    if (creationInfo) {
+        form += `<div class="info-creation">${creationInfo}</div>`;
     }
-    content.innerHTML = form;
 
-    // Initialisation des champs auto-expandables
-    setTimeout(() => {
-        const textareas = document.querySelectorAll('.auto-expand');
-        textareas.forEach(textarea =>    {
-            textarea.style.height = '';
-            textarea.style.height = textarea.scrollHeight + 'px';
-        });
-    }, 0);
-    
+    form += `
+        <div class="popup-actions">
+            <button
+                type="button"
+                class="popup-action-button bouton-supprimer"
+                onclick="supprimerTodo(${Number(todo.id)}, event)"
+                title="${echapperAttribut(T('Remove the task'))}"
+                aria-label="${echapperAttribut(T('Remove the task'))}"
+            >🗑️</button>
+        </div>
+    `;
+
+    content.innerHTML = form;
+    content.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
     popup.classList.add('visible');
 }
 
-/** Insert a field in the todo form as text or a dropdown */
-function insererChamp(id, value, list, title, col, disable) {
-    let form='';
-    if (list?.length > 0) {
-        if( list.length < 10) {
-            form += `
-                <div class="field">
-                    <label class="field-label">${title}</label>
-                    <select class="field-select" onchange="mettreAJourChamp(${id}, '${col}', this.value, event)">
-                    <option value="" ${disable?"disabled":""}></option>`;
-            list.forEach(element => {
-                form += `<option value="${element}" ${value === element ? 'selected' : ''}>${element}</option>`;  
-            });
-            form += `</select>
-                </div>        
-            `;
-        } else {
-            form += `
-                <div class="field">
-                    <label class="field-label">${title}</label>
-                    <input type="text" list="list-${col}" class="field-select" onchange="mettreAJourChamp(${id}, '${col}', this.value, event)" ${disable?"disabled":""}/>
-                    <datalist id="list-${col}">`;
-            list.forEach(element => {
-                form += `<option value="${element}" ${value === element ? 'selected' : ''}>${element}</option>`;  
-            });
-            form += `</datalist>
-                </div>        
-            `;
-        }
-    } else {
-        form += `
+function insererChamp(id, value, list, title, column, disabled) {
+    const currentValue = valeurTexte(value);
+    const choices = [...new Set(normaliserTableau(list).map(valeurTexte).filter(Boolean))];
+    const label = echapperHtml(title);
+
+    if (choices.length > 0 && choices.length < 20) {
+        const options = choices.map((choice) => `
+            <option value="${echapperAttribut(choice)}" ${choice === currentValue ? 'selected' : ''}>
+                ${echapperHtml(choice)}
+            </option>
+        `).join('');
+
+        return `
             <div class="field">
-                <label class="field-label">${title}</label>
-                <input type="text" class="field-input" value="${value || ''}" 
-                    onchange="mettreAJourChamp(${id}, '${col}', this.value, event)" ${disable?"disabled":""}>
+                <label class="field-label">${label}</label>
+                <select
+                    class="field-select"
+                    onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                    <option value=""></option>
+                    ${options}
+                </select>
             </div>
         `;
     }
-    return form;
+
+    if (choices.length >= 20) {
+        const dataListId = `list-${column}-${id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+        const options = choices.map((choice) => `<option value="${echapperAttribut(choice)}"></option>`).join('');
+
+        return `
+            <div class="field">
+                <label class="field-label">${label}</label>
+                <input
+                    type="text"
+                    list="${dataListId}"
+                    class="field-input"
+                    value="${echapperAttribut(currentValue)}"
+                    onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <datalist id="${dataListId}">${options}</datalist>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="field">
+            <label class="field-label">${label}</label>
+            <input
+                type="text"
+                class="field-input"
+                value="${echapperAttribut(currentValue)}"
+                onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value, event)"
+                ${disabled ? 'disabled' : ''}
+            >
+        </div>
+    `;
 }
 
-function echapperHtml(valeur) {
-    return String(valeur)
+function insererChampMultiple(id, selectedIds, title, disabled) {
+    const selection = new Set(normaliserIdsRefList(selectedIds));
+    const options = RESPONSABLES.map((person) => `
+        <label class="multi-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
+            <input
+                type="checkbox"
+                value="${person.id}"
+                data-label="${echapperAttribut(person.label)}"
+                ${selection.has(person.id) ? 'checked' : ''}
+                onchange="mettreAJourChampMultiple(${Number(id)}, this.closest('.multi-dropdown'), event)"
+                ${disabled ? 'disabled' : ''}
+            >
+            <span>${echapperHtml(person.label)}</span>
+        </label>
+    `).join('');
+
+    const selectedLabels = [...selection]
+        .map((personId) => RESPONSABLES_BY_ID.get(personId)?.label)
+        .filter(Boolean);
+
+    return `
+        <div class="field field-responsables">
+            <label class="field-label">${echapperHtml(title)}</label>
+            <details class="multi-dropdown" data-row-id="${Number(id)}">
+                <summary>${echapperHtml(resumeResponsables(selectedLabels))}</summary>
+                <div class="multi-dropdown-menu">
+                    <div class="multi-toolbar">
+                        <input
+                            type="search"
+                            class="multi-search"
+                            placeholder="Rechercher…"
+                            oninput="filtrerResponsables(this)"
+                            onclick="event.stopPropagation()"
+                            ${disabled ? 'disabled' : ''}
+                        >
+                        <button
+                            type="button"
+                            class="multi-clear"
+                            onclick="viderResponsables(this, event)"
+                            ${disabled ? 'disabled' : ''}
+                        >Effacer</button>
+                    </div>
+                    <div class="multi-options">
+                        ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
+                    </div>
+                    <div class="multi-status" aria-live="polite"></div>
+                </div>
+            </details>
+        </div>
+    `;
+}
+
+function resumeResponsables(labels) {
+    const values = normaliserTableau(labels).filter(Boolean);
+    if (values.length === 0) {
+        return 'Choisir…';
+    }
+    if (values.length === 1) {
+        return values[0];
+    }
+    return `${values.length} responsables`;
+}
+
+function filtrerResponsables(input) {
+    const dropdown = input.closest('.multi-dropdown');
+    if (!dropdown) {
+        return;
+    }
+
+    const query = input.value.trim().toLocaleLowerCase(W.cultureFull);
+    dropdown.querySelectorAll('.multi-option').forEach((option) => {
+        option.hidden = query !== '' && !String(option.dataset.search || '').includes(query);
+    });
+}
+
+function viderResponsables(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const dropdown = button.closest('.multi-dropdown');
+    if (!dropdown) {
+        return;
+    }
+
+    dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
+        checkbox.checked = false;
+    });
+
+    mettreAJourChampMultiple(Number(dropdown.dataset.rowId || 0), dropdown, event);
+}
+
+async function mettreAJourChampMultiple(rowId, dropdown, event) {
+    event?.stopPropagation();
+
+    const resolvedRowId = Number(rowId || dropdown?.dataset?.rowId || dropdown?.closest('[data-row-id]')?.dataset?.rowId);
+    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) {
+        console.error('Identifiant de ligne invalide pour les responsables.', {rowId, resolvedRowId});
+        return;
+    }
+
+    const ids = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => Number(input.value))
+        .filter((id) => Number.isInteger(id) && id > 0 && RESPONSABLES_BY_ID.has(id));
+
+    const labels = ids.map((id) => RESPONSABLES_BY_ID.get(id).label);
+    mettreAJourResumeResponsables(dropdown, labels);
+    setResponsableStatus(dropdown, 'saving', 'Enregistrement…');
+
+    const previous = RESPONSABLE_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const next = previous
+        .catch(() => undefined)
+        .then(() => enregistrerResponsablesDansGrist(resolvedRowId, ids))
+        .then(() => {
+            mettreAJourResponsablesLocaux(resolvedRowId, ids);
+            setResponsableStatus(dropdown, 'saved', 'Enregistré');
+            window.setTimeout(() => setResponsableStatus(dropdown, '', ''), 1200);
+        })
+        .catch((error) => {
+            setResponsableStatus(dropdown, 'error', 'Échec de l’enregistrement');
+            console.error('Erreur lors de l’enregistrement des responsables :', error);
+        })
+        .finally(() => {
+            if (RESPONSABLE_SAVE_QUEUES.get(resolvedRowId) === next) {
+                RESPONSABLE_SAVE_QUEUES.delete(resolvedRowId);
+            }
+        });
+
+    RESPONSABLE_SAVE_QUEUES.set(resolvedRowId, next);
+    await next;
+}
+
+async function enregistrerResponsablesDansGrist(rowId, ids) {
+    const actualColumnId = W.map?.RESPONSABLE;
+    if (!actualColumnId || Array.isArray(actualColumnId)) {
+        throw new Error('La colonne Responsable n’est pas correctement mappée.');
+    }
+
+    // Dans l’API des widgets Grist, une RefList au format normal est un tableau de rowId.
+    const table = grist.getTable();
+    await table.update({
+        id: Number(rowId),
+        fields: {
+            [actualColumnId]: [...ids]
+        }
+    });
+
+    if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+        try {
+            await W.updateRecords(
+                W.formatRecord(rowId, {DERNIERE_MISE_A_JOUR: new Date().toISOString()})
+            );
+        } catch (error) {
+            console.warn('Responsables enregistrés, mais date de mise à jour non modifiée :', error);
+        }
+    }
+}
+
+function mettreAJourResponsablesLocaux(rowId, ids) {
+    const record = RECS.find((item) => Number(item.id) === Number(rowId));
+    if (!record) {
+        return;
+    }
+
+    record.RESPONSABLE_id = [...ids];
+    record.RESPONSABLE = ids
+        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
+        .filter(Boolean);
+}
+
+function mettreAJourResumeResponsables(dropdown, labels) {
+    const summary = dropdown.querySelector('summary');
+    if (summary) {
+        summary.textContent = resumeResponsables(labels);
+    }
+}
+
+function setResponsableStatus(dropdown, state, message) {
+    const status = dropdown.querySelector('.multi-status');
+    if (!status) {
+        return;
+    }
+
+    status.className = `multi-status${state ? ` ${state}` : ''}`;
+    status.textContent = message;
+}
+
+// ========== ÉCRITURE GRIST ==========
+
+async function mettreAJourChamp(todoId, field, value, event) {
+    event?.stopPropagation();
+
+    try {
+        if (field === 'STATUT') {
+            const columnInfo = getColumnOptionByStatus(value);
+            if (columnInfo?.useconfetti) {
+                triggerConfetti();
+            }
+        }
+
+        const data = {[field]: value};
+        if (W.map?.DERNIERE_MISE_A_JOUR && field !== 'DERNIERE_MISE_A_JOUR' && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+            data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
+        }
+
+        await W.updateRecords(W.formatRecord(todoId, data));
+    } catch (error) {
+        console.error(T('Error during update:'), error);
+        throw error;
+    }
+}
+
+async function creerNouvelleTache(status) {
+    try {
+        const data = {
+            DESCRIPTION: '',
+            STATUT: status
+        };
+
+        if (W.map?.TYPE && !W.col.TYPE.getIsFormula()) {
+            data.TYPE = '';
+        }
+        if (W.map?.REFERENCE_PROJET && !W.col.REFERENCE_PROJET.getIsFormula()) {
+            data.REFERENCE_PROJET = null;
+        }
+        if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+            data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
+        }
+        if (W.map?.CREE_LE && !W.col.CREE_LE.getIsFormula()) {
+            data.CREE_LE = new Date().toISOString();
+        }
+
+        const result = await W.createRecords({fields: data});
+        if (result?.id > 0) {
+            grist.setCursorPos({rowId: result.id});
+            const record = await W.fetchSelectedRecord(result.id);
+            if (!W.opt.hideedit) {
+                togglePopupTodo(record);
+            }
+        }
+    } catch (error) {
+        console.error(T('Error on creation:'), error);
+    }
+}
+
+async function supprimerTodo(todoId, event) {
+    event?.stopPropagation();
+
+    if (!confirm(T('Are you sure you want to delete this task?'))) {
+        return;
+    }
+
+    try {
+        await W.destroyRecords(todoId);
+        fermerPopup();
+    } catch (error) {
+        console.error(T('Error on delete:'), error);
+    }
+}
+
+// ========== POPUP ET INTERACTIONS ==========
+
+function fermerPopup() {
+    const popup = document.getElementById('popup-todo');
+    if (!popup) {
+        return;
+    }
+
+    const todoId = popup.dataset.currentTodo;
+    trouverCarteParId(todoId)?.classList.remove('active');
+    popup.classList.remove('visible');
+    fermerTousLesMenusResponsables();
+}
+
+function toggleColonne(column, event) {
+    event?.stopPropagation();
+    if (!column) {
+        return;
+    }
+
+    column.classList.toggle('collapsed');
+    const status = column.querySelector('.titre-statut')?.childNodes?.[0]?.textContent?.trim() || column.id;
+    localStorage.setItem(getColumnStorageKey(status), String(column.classList.contains('collapsed')));
+}
+
+function ajusterTextarea(textarea) {
+    if (!textarea) {
+        return;
+    }
+    textarea.style.height = '';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function fermerTousLesMenusResponsables(except = null) {
+    document.querySelectorAll('.multi-dropdown[open]').forEach((details) => {
+        if (details !== except) {
+            details.removeAttribute('open');
+        }
+    });
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        const openedDropdown = document.querySelector('.multi-dropdown[open]');
+        if (openedDropdown) {
+            openedDropdown.removeAttribute('open');
+        } else {
+            fermerPopup();
+        }
+    }
+});
+
+document.addEventListener('click', (event) => {
+    const openedDropdown = event.target.closest('.multi-dropdown');
+    fermerTousLesMenusResponsables(openedDropdown);
+
+    const popup = document.getElementById('popup-todo');
+    if (!popup?.classList.contains('visible')) {
+        return;
+    }
+
+    const isInsidePopup = popup.contains(event.target);
+    const isCard = Boolean(event.target.closest('.carte'));
+    if (!isInsidePopup && !isCard) {
+        fermerPopup();
+    }
+});
+
+// ========== HELPERS ==========
+
+function trouverCarteParId(rowId) {
+    return Array.from(document.querySelectorAll('.carte'))
+        .find((card) => Number(card.dataset.todoId) === Number(rowId)) || null;
+}
+
+function getColumnOption(index) {
+    const options = Array.isArray(W.opt?.columns) ? W.opt.columns : [];
+    return {
+        addbutton: false,
+        isdone: false,
+        useconfetti: false,
+        hidecolumn: false,
+        ...(options[index] || {})
+    };
+}
+
+function getColumnOptionByStatus(status) {
+    const statuses = W.valuesList?.columns || [];
+    const index = statuses.indexOf(status);
+    return index >= 0 ? getColumnOption(index) : null;
+}
+
+function getColumnStorageKey(status) {
+    return `column-todo-${String(status)}`;
+}
+
+function obtenirIdsResponsables(todo) {
+    const directIds = normaliserIdsRefList(todo?.RESPONSABLE_id);
+    if (directIds.length > 0) {
+        return directIds;
+    }
+
+    const labels = obtenirLibellesResponsables(todo);
+    if (labels.length === 0) {
+        return [];
+    }
+
+    const unused = [...RESPONSABLES];
+    return labels.flatMap((label) => {
+        const index = unused.findIndex((person) => person.label === label);
+        if (index < 0) {
+            return [];
+        }
+        const [person] = unused.splice(index, 1);
+        return [person.id];
+    });
+}
+
+function obtenirLibellesResponsables(todo) {
+    const labels = normaliserTableau(todo?.RESPONSABLE)
+        .map(valeurTexte)
+        .filter((value) => value && value !== '#KeyError');
+
+    if (labels.length > 0) {
+        return labels;
+    }
+
+    return normaliserIdsRefList(todo?.RESPONSABLE_id)
+        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
+        .filter(Boolean);
+}
+
+function normaliserIdsRefList(value) {
+    let values = normaliserTableau(value);
+
+    // Tolérance pour d’anciennes valeurs encodées comme ["L", ...ids].
+    if (values[0] === 'L') {
+        values = values.slice(1);
+    }
+
+    return [...new Set(
+        values
+            .map(Number)
+            .filter((id) => Number.isInteger(id) && id > 0)
+    )];
+}
+
+function normaliserTableau(value) {
+    if (value === null || value === undefined || value === '') {
+        return [];
+    }
+    return Array.isArray(value) ? value : [value];
+}
+
+function valeurTexte(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+    return String(value);
+}
+
+function construireInfoCreation(todo) {
+    const hasCreationDate = Boolean(W.map?.CREE_LE && todo.CREE_LE);
+    const hasCreator = Boolean(W.map?.CREE_PAR && todo.CREE_PAR);
+    const hasUpdateDate = Boolean(W.map?.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR);
+
+    if (!hasCreationDate && !hasCreator && !hasUpdateDate) {
+        return '';
+    }
+
+    const parts = [echapperHtml(T('Created'))];
+
+    if (hasCreationDate) {
+        parts.push(echapperHtml(T('on %on', {on: formatDate(todo.CREE_LE)})));
+    }
+
+    if (hasCreator) {
+        parts.push(echapperHtml(T('by %by', {by: valeurTexte(todo.CREE_PAR)})));
+    }
+
+    let html = parts.join(' ');
+    if (hasUpdateDate) {
+        html += `<br>${echapperHtml(T('Last update on %on', {on: formatDate(todo.DERNIERE_MISE_A_JOUR)}))}`;
+    }
+
+    return html;
+}
+
+function formatDate(dateValue) {
+    if (!dateValue) {
+        return '';
+    }
+
+    const date = new Date(dateValue);
+    if (Number.isNaN(date.getTime()) || date >= DEADLINE_PRIORITE) {
+        return '';
+    }
+
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = date.toLocaleDateString(W.cultureFull, {month: 'short'});
+    return `${day} ${month} ${date.getFullYear()}`;
+}
+
+function formatDateForInput(dateValue) {
+    if (!dateValue) {
+        return '';
+    }
+
+    const date = new Date(dateValue);
+    if (Number.isNaN(date.getTime()) || date >= DEADLINE_PRIORITE) {
+        return '';
+    }
+
+    return date.toISOString().split('T')[0];
+}
+
+function serialiserDate(value) {
+    if (!value) {
+        return '';
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function toTimestamp(value) {
+    if (!value) {
+        return null;
+    }
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function toSortableTimestamp(value, fallback) {
+    return toTimestamp(value) ?? fallback;
+}
+
+function echapperHtml(value) {
+    return String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -655,292 +1233,53 @@ function echapperHtml(valeur) {
         .replace(/'/g, '&#039;');
 }
 
-function resumeResponsables(valeurs) {
-    if (!valeurs || valeurs.length === 0) return 'Choisir…';
-    if (valeurs.length === 1) return valeurs[0];
-
-    return `${valeurs[0]} +${valeurs.length - 1}`;
+function echapperAttribut(value) {
+    return echapperHtml(value).replace(/`/g, '&#096;');
 }
 
-function insererChampMultiple(id, value, list, title, col, disable) {
-    const valeurs = Array.isArray(value) ? value : value ? [value] : [];
-
-    const valeursSelectionnees = valeurs
-        .map(String)
-        .filter(valeur => valeur && valeur !== '#KeyError');
-
-    const selection = new Set(valeursSelectionnees);
-
-    const membres = [...new Set(
-        (list || [])
-            .map(String)
-            .filter(valeur => valeur && valeur !== '#KeyError')
-    )];
-
-    const options = membres.map(element => {
-        const elementHtml = echapperHtml(element);
-
-        return `
-            <label class="multi-option">
-                <input
-                    type="checkbox"
-                    value="${elementHtml}"
-                    ${selection.has(element) ? 'checked' : ''}
-                    onchange="mettreAJourChampMultiple(${id}, '${col}', this.closest('.multi-dropdown'), event)"
-                    ${disable ? 'disabled' : ''}
-                >
-                <span>${elementHtml}</span>
-            </label>
-        `;
-    }).join('');
-
-    const resume = echapperHtml(
-    resumeResponsables(valeursSelectionnees)
-    );
-
-    return `
-        <div class="field">
-            <label class="field-label">${title}</label>
-
-            <details class="multi-dropdown">
-                <summary>${resume}</summary>
-
-                <div class="multi-dropdown-menu">
-                    ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
-                </div>
-            </details>
-        </div>
-    `;
+function echapperJs(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
 }
 
-async function mettreAJourChampMultiple(id, col, conteneur, event) {
-    event?.stopPropagation();
-
-    try {
-        // Noms sélectionnés dans le menu
-        const noms = Array.from(
-            conteneur.querySelectorAll(
-                'input[type="checkbox"]:checked'
-            )
-        )
-            .map(input => input.value)
-            .filter(Boolean);
-
-        // Récupération de la table référencée par Responsable
-        const [typeColonne, tableId] =
-            W.col.RESPONSABLE.type.split(':');
-
-        if (typeColonne !== 'RefList' || !tableId) {
-            throw new Error(
-                'La colonne Responsable n’est pas une RefList valide.'
-            );
-        }
-
-        const membres = await grist.docApi.fetchTable(tableId);
-
-        // Colonne affichée par la référence, normalement "Nom"
-        const colonneVisible =
-            await W.col.RESPONSABLE.getMeta(
-                W.col.RESPONSABLE.visibleCol
-            );
-
-        const labels = membres[colonneVisible.colId] || [];
-
-        // Conversion des noms en identifiants de lignes Grist
-        const ids = noms
-            .map(nom => {
-                const index = labels.findIndex(
-                    label => String(label) === String(nom)
-                );
-
-                if (index === -1) {
-                    console.warn(
-                        `Responsable introuvable : ${nom}`
-                    );
-                    return null;
-                }
-
-                return Number(membres.id[index]);
-            })
-            .filter(id => Number.isInteger(id) && id > 0);
-
-        /*
-         * Encodage indispensable :
-         * ["L", 2, 5] et non simplement [2, 5]
-         */
-        const valeurGrist = ['L', ...ids];
-
-        const data = {
-            [col]: valeurGrist
-        };
-
-        if (W.map.DERNIERE_MISE_A_JOUR) {
-            data.DERNIERE_MISE_A_JOUR =
-                new Date().toISOString();
-        }
-
-        console.log('Envoi Responsable à Grist :', valeurGrist);
-
-        // false : ne pas réencoder une valeur déjà préparée
-        await W.updateRecords(
-            W.formatRecord(id, data),
-            false
-        );
-
-        const resume = conteneur.querySelector('summary');
-
-        if (resume) {
-            if (noms.length === 0) {
-                resume.textContent = 'Choisir…';
-            } else if (noms.length === 1) {
-                resume.textContent = noms[0];
-            } else {
-                resume.textContent =
-                    `${noms.length} responsables`;
-            }
-        }
-    } catch (erreur) {
-        console.error(
-            'Erreur lors de l’enregistrement des responsables :',
-            erreur
-        );
-    }
-}
-/* Fermeture du popup */
-function fermerPopup() {
-    const popup = document.getElementById('popup-todo');
-    const todoId = popup.dataset.currentTodo;
-    const carteActive = document.querySelector(`[data-todo-id="${todoId}"]`);
-    if (carteActive) {
-        carteActive.classList.remove('active');
-    }
-    popup.classList.remove('visible');
+function encoderAttribut(value) {
+    return encodeURIComponent(String(value ?? '')).replace(/'/g, '%27');
 }
 
-/* Fermeture avec la touche Echap */
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        fermerPopup();
-    }
-});
-  
-/* Fermeture au clic en dehors */
-document.addEventListener('click', (e) => {
-    const popup = document.getElementById('popup-todo');
-    if (popup.classList.contains('visible')) {
-        const popupContent = popup.querySelector('.popup-content');
-        if (!popupContent.contains(e.target) && !e.target.closest('.carte') && !e.target.closest('.popup-header')) {
-            fermerPopup();
-        }
-    }
-});
-
-// ========== GESTION DES TÂCHES ==========
-/* Création d'une nouvelle tâche */
-async function creerNouvelleTache(colonneId) {
-    try {
-        let data = {DESCRIPTION: '', STATUT: colonneId};
-        if (W.map.TYPE && !W.col.TYPE.getIsFormula()) data.TYPE = '';
-        if (W.map.REFERENCE_PROJET && !W.col.REFERENCE_PROJET.getIsFormula()) data.REFERENCE_PROJET = null;
-        if (W.map.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
-        if (W.map.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
-
-        const res = await W.createRecords({fields: data});
-        if (res.id && res.id > 0) {
-            const rec = await W.fetchSelectedRecord(res.id);
-            grist.setCursorPos({rowId: res.id});
-            if(!W.opt.hideedit) togglePopupTodo(rec);
-        }
-    } catch (erreur) {
-            console.error(T('Error on creation:'), erreur);
-    }
-}
-
-/* Suppression d'une tâche */
-async function supprimerTodo(todoId, e) {
-    e?.stopPropagation();
-    if (confirm(T('Are you sure you want to delete this task?'))) {
-        try {
-            await W.destroyRecords(todoId);
-            fermerPopup();
-        } catch (erreur) {
-            console.error(T('Error on delete:'), erreur);
-        }
-    }
-}
-
-// ========== HELPERS ==========
-/** Place here the code for helper functions */
-/* Gestion du repli/dépli des colonnes */
-function toggleColonne(colonne, e) {
-    e?.stopPropagation();
-    colonne.classList.toggle('collapsed');
-    localStorage.setItem(`column-todo-${colonne.querySelector('.titre-statut').textContent.trim()}`, colonne.classList.contains('collapsed'));
-}
-  
-/* Fonction pour déclencher l'animation de confettis */
 function triggerConfetti() {
-    const duration = 2 * 1000;
-    const animationEnd = Date.now() + duration;
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
-
-    function randomInRange(min, max) {
-        return Math.random() * (max - min) + min;
+    if (typeof confetti !== 'function') {
+        return;
     }
 
-    const interval = setInterval(function() {
-        const timeLeft = animationEnd - Date.now();
+    const duration = 2000;
+    const animationEnd = Date.now() + duration;
+    const defaults = {startVelocity: 30, spread: 360, ticks: 60, zIndex: 1500};
 
+    const randomInRange = (min, max) => Math.random() * (max - min) + min;
+
+    const interval = window.setInterval(() => {
+        const timeLeft = animationEnd - Date.now();
         if (timeLeft <= 0) {
-            return clearInterval(interval);
+            window.clearInterval(interval);
+            return;
         }
 
         const particleCount = 50 * (timeLeft / duration);
-        
-        confetti(Object.assign({}, defaults, {
-            particleCount,
-            origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-        }));
-        confetti(Object.assign({}, defaults, {
-            particleCount,
-            origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
-        }));
+        confetti({...defaults, particleCount, origin: {x: randomInRange(0.1, 0.3), y: Math.random() - 0.2}});
+        confetti({...defaults, particleCount, origin: {x: randomInRange(0.7, 0.9), y: Math.random() - 0.2}});
     }, 250);
 }
 
-/* Formatage des dates */
-function formatDate(dateStr) {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    if (date >= DEADLINE_PRIORITE) return null;
+// ========== EXPORTS POUR LES ATTRIBUTS HTML ==========
 
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = date.toLocaleDateString(W.cultureFull, { month: 'short' });
-    const year = date.getFullYear();
-    return `${day} ${month} ${year}`;
-}
-
-/* Formatage des dates pour les champs input */
-function formatDateForInput(dateStr) {
-    if (!dateStr) return '';
-    //if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-    try {
-        const date = new Date(dateStr);
-        if (date >= DEADLINE_PRIORITE)
-            return '';
-        else 
-            return date.toISOString().split('T')[0];
-    } catch (e) {
-        console.error(T('Error on date formating:'), e);
-        return '';
-    }
-}
-
-// ========== EXPORT DES FONCTIONS GLOBALES ==========
-  window.toggleColonne = toggleColonne;
-  window.togglePopupTodo = togglePopupTodo;
-  window.fermerPopup = fermerPopup;
-  window.mettreAJourChamp = mettreAJourChamp;
-  window.creerNouvelleTache = creerNouvelleTache;
-  window.supprimerTodo = supprimerTodo;
-  window.mettreAJourChampMultiple = mettreAJourChampMultiple;
+window.toggleColonne = toggleColonne;
+window.togglePopupTodo = togglePopupTodo;
+window.fermerPopup = fermerPopup;
+window.mettreAJourChamp = mettreAJourChamp;
+window.creerNouvelleTache = creerNouvelleTache;
+window.supprimerTodo = supprimerTodo;
+window.mettreAJourChampMultiple = mettreAJourChampMultiple;
+window.filtrerResponsables = filtrerResponsables;
+window.viderResponsables = viderResponsables;
+window.ajusterTextarea = ajusterTextarea;
