@@ -717,20 +717,61 @@ async function mettreAJourChampMultiple(id, col, conteneur, event) {
     event?.stopPropagation();
 
     try {
-        // Noms cochés dans le menu
+        // Noms sélectionnés dans le menu
         const noms = Array.from(
             conteneur.querySelectorAll(
                 'input[type="checkbox"]:checked'
             )
         )
-            .map(option => option.value)
+            .map(input => input.value)
             .filter(Boolean);
 
-        // Conversion des noms en identifiants Grist
-        const ids = await W.col.RESPONSABLE.encode(noms);
+        // Récupération de la table référencée par Responsable
+        const [typeColonne, tableId] =
+            W.col.RESPONSABLE.type.split(':');
+
+        if (typeColonne !== 'RefList' || !tableId) {
+            throw new Error(
+                'La colonne Responsable n’est pas une RefList valide.'
+            );
+        }
+
+        const membres = await grist.docApi.fetchTable(tableId);
+
+        // Colonne affichée par la référence, normalement "Nom"
+        const colonneVisible =
+            await W.col.RESPONSABLE.getMeta(
+                W.col.RESPONSABLE.visibleCol
+            );
+
+        const labels = membres[colonneVisible.colId] || [];
+
+        // Conversion des noms en identifiants de lignes Grist
+        const ids = noms
+            .map(nom => {
+                const index = labels.findIndex(
+                    label => String(label) === String(nom)
+                );
+
+                if (index === -1) {
+                    console.warn(
+                        `Responsable introuvable : ${nom}`
+                    );
+                    return null;
+                }
+
+                return Number(membres.id[index]);
+            })
+            .filter(id => Number.isInteger(id) && id > 0);
+
+        /*
+         * Encodage indispensable :
+         * ["L", 2, 5] et non simplement [2, 5]
+         */
+        const valeurGrist = ['L', ...ids];
 
         const data = {
-            [col]: ids
+            [col]: valeurGrist
         };
 
         if (W.map.DERNIERE_MISE_A_JOUR) {
@@ -738,13 +779,14 @@ async function mettreAJourChampMultiple(id, col, conteneur, event) {
                 new Date().toISOString();
         }
 
-        // false = les valeurs sont déjà encodées, ne pas les reconvertir
+        console.log('Envoi Responsable à Grist :', valeurGrist);
+
+        // false : ne pas réencoder une valeur déjà préparée
         await W.updateRecords(
             W.formatRecord(id, data),
             false
         );
 
-        // Mise à jour du résumé du menu
         const resume = conteneur.querySelector('summary');
 
         if (resume) {
@@ -753,12 +795,13 @@ async function mettreAJourChampMultiple(id, col, conteneur, event) {
             } else if (noms.length === 1) {
                 resume.textContent = noms[0];
             } else {
-                resume.textContent = `${noms.length} responsables`;
+                resume.textContent =
+                    `${noms.length} responsables`;
             }
         }
     } catch (erreur) {
         console.error(
-            'Erreur pendant la mise à jour des responsables :',
+            'Erreur lors de l’enregistrement des responsables :',
             erreur
         );
     }
