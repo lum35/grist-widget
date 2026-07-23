@@ -159,7 +159,7 @@ window.addEventListener('load', async (event) => {
      *              • For optimization, prefer {expandRefs:false, keepEncoded:false} if working with ref ids, 
      *                  or {expandRefs:true, keepEncoded:false} if working with ref content
      */
-    W.onRecords(afficherKanban, {expandRefs:false, keepEncoded:false, mapRef:true});
+    W.onRecords(afficherKanban, {expandRefs:true, keepEncoded:false, mapRef:false});
 
     /** When all configurations have been loaded, proceed to widget initialization.
      * This way, it ensures that all information are available to render your widget
@@ -632,59 +632,82 @@ function insererChamp(id, value, list, title, col, disable) {
     return form;
 }
 
-function insererChampMultiple(id, value, list, title, col, disable) {
-  const valeursSelectionnees = new Set(
-    Array.isArray(value)
-      ? value.map(String)
-      : value
-        ? [String(value)]
-        : []
-  );
-
-  const options = (list || [])
-    .filter(Boolean)
-    .map(element => {
-      const valeur = String(element);
-      const selected = valeursSelectionnees.has(valeur)
-        ? 'selected'
-        : '';
-
-      return `
-        <option value="${W.escapeQuotes(valeur)}" ${selected}>
-          ${valeur}
-        </option>
-      `;
-    })
-    .join('');
-
-  return `
-    <div class="field">
-      <label class="field-label">${title}</label>
-
-      <select
-        class="field-select field-select-multiple"
-        multiple
-        size="5"
-        onchange="mettreAJourChampMultiple(
-          ${id},
-          '${col}',
-          this,
-          event
-        )"
-        ${disable ? 'disabled' : ''}
-      >
-        ${options}
-      </select>
-    </div>
-  `;
+function echapperHtml(valeur) {
+    return String(valeur)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-async function mettreAJourChampMultiple(id, col, select, event) {
-  const valeurs = Array.from(select.selectedOptions)
-    .map(option => option.value)
-    .filter(Boolean);
+function insererChampMultiple(id, value, list, title, col, disable) {
+    const valeurs = Array.isArray(value) ? value : value ? [value] : [];
 
-  await mettreAJourChamp(id, col, valeurs, event);
+    const valeursSelectionnees = valeurs
+        .map(String)
+        .filter(valeur => valeur && valeur !== '#KeyError');
+
+    const selection = new Set(valeursSelectionnees);
+
+    const membres = [...new Set(
+        (list || [])
+            .map(String)
+            .filter(valeur => valeur && valeur !== '#KeyError')
+    )];
+
+    const options = membres.map(element => {
+        const elementHtml = echapperHtml(element);
+
+        return `
+            <label class="multi-option">
+                <input
+                    type="checkbox"
+                    value="${elementHtml}"
+                    ${selection.has(element) ? 'checked' : ''}
+                    onchange="mettreAJourChampMultiple(${id}, '${col}', this.closest('.multi-dropdown'), event)"
+                    ${disable ? 'disabled' : ''}
+                >
+                <span>${elementHtml}</span>
+            </label>
+        `;
+    }).join('');
+
+    const resume = valeursSelectionnees.length
+        ? valeursSelectionnees.map(echapperHtml).join(', ')
+        : 'Choisir…';
+
+    return `
+        <div class="field">
+            <label class="field-label">${title}</label>
+
+            <details class="multi-dropdown">
+                <summary>${resume}</summary>
+
+                <div class="multi-dropdown-menu">
+                    ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
+                </div>
+            </details>
+        </div>
+    `;
+}
+
+async function mettreAJourChampMultiple(id, col, conteneur, event) {
+    event?.stopPropagation();
+
+    const valeurs = Array.from(
+        conteneur.querySelectorAll('input[type="checkbox"]:checked')
+    ).map(option => option.value);
+
+    const resume = conteneur.querySelector('summary');
+
+    if (resume) {
+        resume.textContent = valeurs.length
+            ? valeurs.join(', ')
+            : 'Choisir…';
+    }
+
+    await mettreAJourChamp(id, col, valeurs, event);
 }
 
 /* Fermeture du popup */
@@ -725,7 +748,6 @@ async function creerNouvelleTache(colonneId) {
         if (W.map.REFERENCE_PROJET && !W.col.REFERENCE_PROJET.getIsFormula()) data.REFERENCE_PROJET = null;
         if (W.map.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
         if (W.map.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
-        if (W.map.RESPONSABLE && !W.col.RESPONSABLE.getIsFormula()) data.RESPONSABLE = [];
 
         const res = await W.createRecords({fields: data});
         if (res.id && res.id > 0) {

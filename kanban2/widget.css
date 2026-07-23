@@ -559,3 +559,78 @@
   .kanban.visible {
     display: flex;
   }
+
+.multi-dropdown {
+    position: relative;
+    width: 100%;
+}
+
+.multi-dropdown summary {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 32px 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    list-style: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.multi-dropdown summary::-webkit-details-marker {
+    display: none;
+}
+
+.multi-dropdown summary::after {
+    content: "▼";
+    position: absolute;
+    top: 11px;
+    right: 10px;
+    font-size: 10px;
+}
+
+.multi-dropdown[open] summary::after {
+    content: "▲";
+}
+
+.multi-dropdown-menu {
+    position: absolute;
+    z-index: 1000;
+    box-sizing: border-box;
+    width: 100%;
+    max-height: 220px;
+    margin-top: 4px;
+    padding: 6px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #fff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.multi-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.multi-option:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.multi-option input {
+    margin: 0;
+}
+
+.multi-empty {
+    padding: 8px;
+    font-size: 13px;
+    opacity: 0.7;
+}
