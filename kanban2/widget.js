@@ -137,7 +137,7 @@ window.addEventListener('load', async (event) => {
             {name:'DEADLINE', title:'Deadline', description:'Can also be use as priority', type:'Date', optional:true},             
             {name:'REFERENCE_PROJET', title:'Reference', description:'Reference associated with the task', type:'Any', optional:true},
             {name:'TYPE', title:'Type', description:'Type associated with the task', type:'Any', optional:true},              
-            {name:'RESPONSABLE', title:'In charge', description:'Who is in charge', type:'Any', optional:true}, 
+            {name:'RESPONSABLE', title:'Responsables', description:'Personnes responsables de la tâche', type:'RefList', strictType:true, optional:true},
             {name:'CREE_PAR', title:'Created by', type:'Any', optional:true}, 
             {name:'CREE_LE', title:'Creation date', type:'DateTime', optional:true}, 
             {name:'DERNIERE_MISE_A_JOUR', title:'Last update date', description:'Updated after any change', type:'DateTime', optional:true},
@@ -368,7 +368,19 @@ function creerCarteTodo(todo) {
     const type = todo.TYPE || '';
     const description = todo.DESCRIPTION_DISPLAY || todo.DESCRIPTION || T('No description');
     const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
-    const responsable = todo.RESPONSABLE || '';
+    const responsables = Array.isArray(todo.RESPONSABLE)
+  ? todo.RESPONSABLE.filter(Boolean)
+  : todo.RESPONSABLE
+    ? [todo.RESPONSABLE]
+    : [];
+
+const responsablesHtml = responsables
+  .map(responsable => `
+    <span class="responsable-badge">
+      ${responsable}
+    </span>
+  `)
+  .join('');
     const projetRef = todo.REFERENCE_PROJET;
     const tags = todo.TAGS || [];
 
@@ -515,7 +527,7 @@ function togglePopupTodo(todo) {
     }
     if (count % 2 === 0) form += `</div><div class="field-row">`;
     if (W.map.RESPONSABLE) {
-        form += insererChamp(todo.id, todo.RESPONSABLE, W.valuesList.incharge, W.map.RESPONSABLE, 'RESPONSABLE', W.col.RESPONSABLE.getIsFormula());
+        form += insererChampMultiple(todo.id, todo.RESPONSABLE, W.valuesList.incharge, W.map.RESPONSABLE, 'RESPONSABLE', W.col.RESPONSABLE.getIsFormula());
         count += 1;   
     }
     if (count % 2 === 0) form += `</div><div class="field-row">`;
@@ -618,6 +630,61 @@ function insererChamp(id, value, list, title, col, disable) {
         `;
     }
     return form;
+}
+
+function insererChampMultiple(id, value, list, title, col, disable) {
+  const valeursSelectionnees = new Set(
+    Array.isArray(value)
+      ? value.map(String)
+      : value
+        ? [String(value)]
+        : []
+  );
+
+  const options = (list || [])
+    .filter(Boolean)
+    .map(element => {
+      const valeur = String(element);
+      const selected = valeursSelectionnees.has(valeur)
+        ? 'selected'
+        : '';
+
+      return `
+        <option value="${W.escapeQuotes(valeur)}" ${selected}>
+          ${valeur}
+        </option>
+      `;
+    })
+    .join('');
+
+  return `
+    <div class="field">
+      <label class="field-label">${title}</label>
+
+      <select
+        class="field-select field-select-multiple"
+        multiple
+        size="5"
+        onchange="mettreAJourChampMultiple(
+          ${id},
+          '${col}',
+          this,
+          event
+        )"
+        ${disable ? 'disabled' : ''}
+      >
+        ${options}
+      </select>
+    </div>
+  `;
+}
+
+async function mettreAJourChampMultiple(id, col, select, event) {
+  const valeurs = Array.from(select.selectedOptions)
+    .map(option => option.value)
+    .filter(Boolean);
+
+  await mettreAJourChamp(id, col, valeurs, event);
 }
 
 /* Fermeture du popup */
@@ -757,3 +824,4 @@ function formatDateForInput(dateStr) {
   window.mettreAJourChamp = mettreAJourChamp;
   window.creerNouvelleTache = creerNouvelleTache;
   window.supprimerTodo = supprimerTodo;
+  window.mettreAJourChampMultiple = mettreAJourChampMultiple;
