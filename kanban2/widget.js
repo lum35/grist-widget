@@ -389,14 +389,14 @@ const responsablesHtml = responsables
     const infoColonne = W.getValueListOption('columns', todo.STATUT); //.find((colonne) => {return colonne.id === todo.STATUT});
 
     carte.innerHTML = `
-        ${projetRef && projetRef.length > 0 ? `<div class="projet-ref truncate">#${projetRef}</div>` : ''}
-        ${type ? `<div class="type-tag truncate">${type}</div>` : (projetRef && projetRef.length > 0 ? '<div>&nbsp;</div>':'')}
-        ${tags.length > 0 ? `<div>${taglist}</div>`:''}
-        <div class="description">${description}</div>
-        ${deadline ? `<div class="deadline${todo.DEADLINE < Date.now() ? ' late':''} truncate">📅 ${deadline}</div>` : (responsable ? '<div>&nbsp;</div>':'')}
-        ${responsable ? `<div class="responsable-badge truncate">${responsable}</div>` : ''}
-        ${infoColonne?.isdone ? `<div class="tampon-termine" style="color: ${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${todo.STATUT}</div>` : ''}      
-    `;
+    ${projetRef && projetRef.length > 0 ? `<div class="projet-ref truncate">#${projetRef}</div>` : ''}
+    ${type ? `<div class="type-tag truncate">${type}</div>` : (projetRef && projetRef.length > 0 ? '<div>&nbsp;</div>':'')}
+    ${tags.length > 0 ? `<div>${taglist}</div>`:''}
+    <div class="description">${description}</div>
+    ${deadline ? `<div class="deadline${todo.DEADLINE < Date.now() ? ' late':''} truncate">📅 ${deadline}</div>` : (responsables.length ? '<div>&nbsp;</div>':'')}
+    ${responsables.length ? `<div class="responsables-list">${responsablesHtml}</div>` : ''}
+    ${infoColonne?.isdone ? `<div class="tampon-termine" style="color: ${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${todo.STATUT}</div>` : ''}      
+`;
   
     carte.addEventListener('click', () => {
         grist.setCursorPos({rowId: todo.id});
