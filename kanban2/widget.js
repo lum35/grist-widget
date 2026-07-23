@@ -1,5 +1,5 @@
 // ========== KANBAN2 — VERSION REFAITE ==========
-// Compatible avec WidgetSDK 1.2.0.62 et les colonnes Grist RefList.
+// Compatible avec WidgetSDK 1.2.0.62 et les colonnes Grist RefList
 
 let W;
 let T;
