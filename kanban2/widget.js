@@ -716,19 +716,53 @@ function insererChampMultiple(id, value, list, title, col, disable) {
 async function mettreAJourChampMultiple(id, col, conteneur, event) {
     event?.stopPropagation();
 
-    const valeurs = Array.from(
-        conteneur.querySelectorAll('input[type="checkbox"]:checked')
-    ).map(option => option.value);
+    try {
+        // Noms cochés dans le menu
+        const noms = Array.from(
+            conteneur.querySelectorAll(
+                'input[type="checkbox"]:checked'
+            )
+        )
+            .map(option => option.value)
+            .filter(Boolean);
 
-    const resume = conteneur.querySelector('summary');
+        // Conversion des noms en identifiants Grist
+        const ids = await W.col.RESPONSABLE.encode(noms);
 
-    if (resume) {
-    resume.textContent = resumeResponsables(valeurs);
+        const data = {
+            [col]: ids
+        };
+
+        if (W.map.DERNIERE_MISE_A_JOUR) {
+            data.DERNIERE_MISE_A_JOUR =
+                new Date().toISOString();
+        }
+
+        // false = les valeurs sont déjà encodées, ne pas les reconvertir
+        await W.updateRecords(
+            W.formatRecord(id, data),
+            false
+        );
+
+        // Mise à jour du résumé du menu
+        const resume = conteneur.querySelector('summary');
+
+        if (resume) {
+            if (noms.length === 0) {
+                resume.textContent = 'Choisir…';
+            } else if (noms.length === 1) {
+                resume.textContent = noms[0];
+            } else {
+                resume.textContent = `${noms.length} responsables`;
+            }
+        }
+    } catch (erreur) {
+        console.error(
+            'Erreur pendant la mise à jour des responsables :',
+            erreur
+        );
     }
-
-    await mettreAJourChamp(id, col, valeurs, event);
 }
-
 /* Fermeture du popup */
 function fermerPopup() {
     const popup = document.getElementById('popup-todo');
