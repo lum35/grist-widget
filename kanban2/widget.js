@@ -725,6 +725,7 @@ async function creerNouvelleTache(colonneId) {
         if (W.map.REFERENCE_PROJET && !W.col.REFERENCE_PROJET.getIsFormula()) data.REFERENCE_PROJET = null;
         if (W.map.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
         if (W.map.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
+        if (W.map.RESPONSABLE && !W.col.RESPONSABLE.getIsFormula()) data.RESPONSABLE = [];
 
         const res = await W.createRecords({fields: data});
         if (res.id && res.id > 0) {
