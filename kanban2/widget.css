@@ -235,22 +235,33 @@
   }
 
 .responsables-list {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    min-width: 0;
+    margin-top: 0.5rem;
+    overflow: hidden;
 }
 
 .responsable-badge {
-  position: static;
-  display: inline-block;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  background-color: rgba(0, 0, 0, 0.08);
-  white-space: nowrap;
+    position: static;
+    display: inline-block;
+    max-width: 75%;
+    padding: 0.2rem 0.5rem;
+    overflow: hidden;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.08);
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.responsable-plus {
+    flex: 0 0 auto;
+    max-width: none;
+    font-weight: 600;
 }
 
 .field-select-multiple {

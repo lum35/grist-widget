@@ -159,7 +159,7 @@ window.addEventListener('load', async (event) => {
      *              • For optimization, prefer {expandRefs:false, keepEncoded:false} if working with ref ids, 
      *                  or {expandRefs:true, keepEncoded:false} if working with ref content
      */
-    W.onRecords(afficherKanban, {expandRefs:true, keepEncoded:false, mapRef:false});
+    W.onRecords(afficherKanban, {expandRefs:false, keepEncoded:false, mapRef:true});
 
     /** When all configurations have been loaded, proceed to widget initialization.
      * This way, it ensures that all information are available to render your widget
@@ -368,19 +368,33 @@ function creerCarteTodo(todo) {
     const type = todo.TYPE || '';
     const description = todo.DESCRIPTION_DISPLAY || todo.DESCRIPTION || T('No description');
     const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
-    const responsables = Array.isArray(todo.RESPONSABLE)
-  ? todo.RESPONSABLE.filter(Boolean)
-  : todo.RESPONSABLE
-    ? [todo.RESPONSABLE]
-    : [];
+    const responsables = (
+    Array.isArray(todo.RESPONSABLE)
+        ? todo.RESPONSABLE
+        : todo.RESPONSABLE
+            ? [todo.RESPONSABLE]
+            : []
+)
+    .map(String)
+    .filter(responsable =>
+        responsable &&
+        responsable !== '#KeyError'
+    );
 
-const responsablesHtml = responsables
-  .map(responsable => `
-    <span class="responsable-badge">
-      ${responsable}
-    </span>
-  `)
-  .join('');
+const premierResponsable = responsables[0];
+
+const responsablesHtml = premierResponsable
+    ? `
+        <span class="responsable-badge">
+            ${echapperHtml(premierResponsable)}
+        </span>
+
+        ${responsables.length > 1
+            ? `<span class="responsable-badge responsable-plus">+${responsables.length - 1}</span>`
+            : ''
+        }
+    `
+    : '';
     const projetRef = todo.REFERENCE_PROJET;
     const tags = todo.TAGS || [];
 
@@ -641,6 +655,13 @@ function echapperHtml(valeur) {
         .replace(/'/g, '&#039;');
 }
 
+function resumeResponsables(valeurs) {
+    if (!valeurs || valeurs.length === 0) return 'Choisir…';
+    if (valeurs.length === 1) return valeurs[0];
+
+    return `${valeurs[0]} +${valeurs.length - 1}`;
+}
+
 function insererChampMultiple(id, value, list, title, col, disable) {
     const valeurs = Array.isArray(value) ? value : value ? [value] : [];
 
@@ -673,9 +694,9 @@ function insererChampMultiple(id, value, list, title, col, disable) {
         `;
     }).join('');
 
-    const resume = valeursSelectionnees.length
-        ? valeursSelectionnees.map(echapperHtml).join(', ')
-        : 'Choisir…';
+    const resume = echapperHtml(
+    resumeResponsables(valeursSelectionnees)
+    );
 
     return `
         <div class="field">
@@ -702,9 +723,7 @@ async function mettreAJourChampMultiple(id, col, conteneur, event) {
     const resume = conteneur.querySelector('summary');
 
     if (resume) {
-        resume.textContent = valeurs.length
-            ? valeurs.join(', ')
-            : 'Choisir…';
+    resume.textContent = resumeResponsables(valeurs);
     }
 
     await mettreAJourChamp(id, col, valeurs, event);
