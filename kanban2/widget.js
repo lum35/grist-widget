@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8.3 ==========
-// Checklist alignée, sélecteur de date fiable et panneau équipe simplifié.
+// ========== KANBAN2 — VERSION 8.3.2 ==========
+// Le bouton de suppression archive désormais la carte.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -85,7 +85,13 @@ window.addEventListener('load', async () => {
             WidgetSDK.newItem('readonly', false, 'Lecture seule', 'Désactiver toutes les modifications depuis le widget.', '4 — Comportement'),
             WidgetSDK.newItem('hideedit', false, 'Masquer la fiche', 'Ne pas ouvrir la fiche descriptive lors d’un clic sur une carte.', '4 — Comportement'),
             WidgetSDK.newItem('gristeditcard', false, 'Double-clic vers la fiche Grist', 'Ouvrir la fiche native de Grist lors d’un double-clic.', '4 — Comportement'),
-            WidgetSDK.newItem('confirmdelete', true, 'Confirmer les suppressions', 'Demander une confirmation avant de supprimer une tâche.', '4 — Comportement')
+            WidgetSDK.newItem(
+                'archivestatus',
+                'Archives',
+                'Liste d’archives',
+                'Nom du statut dans lequel déplacer les cartes archivées.',
+                '4 — Comportement'
+            )
         ],
         '#config-view',
         '#main-view',
@@ -1114,11 +1120,11 @@ async function togglePopupTodo(todo) {
             <div class="popup-actions">
                 <button
                     type="button"
-                    class="popup-action-button bouton-supprimer"
-                    onclick="supprimerTodo(${Number(todo.id)}, event)"
-                    title="${echapperAttribut(T('Remove the task'))}"
-                    aria-label="${echapperAttribut(T('Remove the task'))}"
-                >🗑️</button>
+                    class="popup-action-button bouton-archiver"
+                    onclick="archiverTodo(${Number(todo.id)}, event)"
+                    title="Archiver la tâche"
+                    aria-label="Archiver la tâche"
+                >🗃️</button>
             </div>
         </div>
     `;
@@ -3835,24 +3841,20 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
             >${echapperHtml(item.text)}</textarea>
 
             <div class="checklist-item-actions">
-                <div
+                <label
                     class="checklist-inline-date${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
+                    title="${echapperAttribut(dateTitle)}"
                 >
-                    <button
-                        type="button"
+                    <span
                         class="checklist-inline-date-button"
-                        onclick="ouvrirDateChecklist(this, event)"
-                        title="${echapperAttribut(dateTitle)}"
-                        aria-label="${echapperAttribut(dateTitle)}"
-                        ${disabled ? 'disabled' : ''}
-                    >📅</button>
+                        aria-hidden="true"
+                    >📅</span>
 
                     <input
                         type="date"
                         class="checklist-inline-date-input"
                         value="${echapperAttribut(item.dueDate)}"
-                        tabindex="-1"
-                        aria-hidden="true"
+                        aria-label="${echapperAttribut(dateTitle)}"
                         onchange="mettreAJourItemChecklist(
                             ${Number(rowId)},
                             '${echapperJs(checklistId)}',
@@ -3864,7 +3866,7 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
                         )"
                         ${disabled ? 'disabled' : ''}
                     >
-                </div>
+                </label>
 
                 ${construireAssignationItemChecklist(
                     item,
@@ -3946,32 +3948,6 @@ function filtrerOptionsChecklist(input) {
     details?.querySelectorAll('.checklist-person-option').forEach((option) => {
         option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
     });
-}
-
-function ouvrirDateChecklist(button, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const wrapper = button?.closest('.checklist-inline-date');
-    const input = wrapper?.querySelector(
-        '.checklist-inline-date-input'
-    );
-
-    if (!input || input.disabled) {
-        return;
-    }
-
-    input.focus({preventScroll: true});
-
-    try {
-        if (typeof input.showPicker === 'function') {
-            input.showPicker();
-        } else {
-            input.click();
-        }
-    } catch (_) {
-        input.click();
-    }
 }
 
 function ouvrirAjoutItemChecklist(button, event) {
@@ -5644,18 +5620,120 @@ async function creerNouvelleTache(status) {
     }
 }
 
-async function supprimerTodo(todoId, event) {
+async function archiverTodo(todoId, event) {
+    event?.preventDefault();
     event?.stopPropagation();
-    if (W.opt.confirmdelete !== false && !confirm(T('Are you sure you want to delete this task?'))) {
-        return;
+
+    const button = event?.currentTarget;
+    const originalContent = button?.innerHTML;
+
+    if (button) {
+        button.disabled = true;
+        button.classList.add('is-loading');
+        button.innerHTML = '…';
+        button.title = 'Archivage en cours…';
     }
 
     try {
-        await W.destroyRecords(todoId);
+        const choices = await W.col.STATUT.getChoices();
+        const configuredStatus =
+            valeurTexte(W.opt?.archivestatus).trim() ||
+            'Archives';
+
+        const archiveStatus =
+            choices.find((status) =>
+                valeurTexte(status) === configuredStatus
+            ) ||
+            choices.find((status) =>
+                valeurTexte(status)
+                    .toLocaleLowerCase(W.cultureFull) ===
+                configuredStatus
+                    .toLocaleLowerCase(W.cultureFull)
+            ) ||
+            choices.find((status) =>
+                valeurTexte(status)
+                    .toLocaleLowerCase(W.cultureFull)
+                    .includes('archive')
+            );
+
+        if (!archiveStatus) {
+            throw new Error(
+                `Aucun statut « ${configuredStatus} » n’existe dans la colonne Statut.`
+            );
+        }
+
+        const data = {
+            STATUT: archiveStatus,
+            ...construireChampsSuivi()
+        };
+
+        if (
+            W.map?.ORDRE &&
+            !W.col.ORDRE.getIsFormula()
+        ) {
+            data.ORDRE = prochainOrdrePourStatut(
+                archiveStatus
+            );
+        }
+
+        await W.updateRecords(
+            W.formatRecord(todoId, data)
+        );
+
+        const record = trouverRecord(todoId);
+        if (record) {
+            Object.assign(record, data);
+        }
+
         fermerPopup();
+        await afficherKanban(RECS);
     } catch (error) {
-        console.error(T('Error on delete:'), error);
+        console.error(
+            'Impossible d’archiver la tâche :',
+            error
+        );
+
+        afficherMessageArchivage(
+            error?.message ||
+            'Impossible d’archiver la tâche.'
+        );
+
+        if (button) {
+            button.disabled = false;
+            button.classList.remove('is-loading');
+            button.innerHTML = originalContent || '🗃️';
+            button.title = 'Archiver la tâche';
+        }
     }
+}
+
+function afficherMessageArchivage(message) {
+    const popup = document.getElementById('popup-todo');
+    const content = popup?.querySelector(
+        '.popup-content'
+    );
+
+    if (!content) {
+        return;
+    }
+
+    let status = content.querySelector(
+        '.archive-status-message'
+    );
+
+    if (!status) {
+        status = document.createElement('div');
+        status.className =
+            'archive-status-message';
+        status.setAttribute('role', 'alert');
+        content.appendChild(status);
+    }
+
+    status.textContent = message;
+
+    window.setTimeout(() => {
+        status?.remove();
+    }, 4500);
 }
 
 // ========== POPUP ET INTERACTIONS ==========
@@ -6135,7 +6213,7 @@ window.togglePopupTodo = togglePopupTodo;
 window.fermerPopup = fermerPopup;
 window.mettreAJourChamp = mettreAJourChamp;
 window.creerNouvelleTache = creerNouvelleTache;
-window.supprimerTodo = supprimerTodo;
+window.archiverTodo = archiverTodo;
 window.mettreAJourChampPersonnes = mettreAJourChampPersonnes;
 window.filtrerOptionsMultiples = filtrerOptionsMultiples;
 window.viderChampPersonnes = viderChampPersonnes;
@@ -6156,7 +6234,6 @@ window.gererCreationChecklistClavier = gererCreationChecklistClavier;
 window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
 window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
 
-window.ouvrirDateChecklist = ouvrirDateChecklist;
 window.ouvrirAjoutItemChecklist = ouvrirAjoutItemChecklist;
 window.fermerAjoutItemChecklist = fermerAjoutItemChecklist;
 window.gererAjoutItemChecklistClavier = gererAjoutItemChecklistClavier;
