@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 5.2.1 ==========
-// Notes enrichies, responsables et étiquettes en RefList, avatars compacts, pièces jointes et commentaires Grist.
+// ========== KANBAN2 — VERSION 6 ==========
+// Membres et responsables en RefList, étiquettes compactes, checklist avancée, ordre manuel, pièces jointes et commentaires.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -23,8 +23,9 @@ let ATTACHMENT_META = new Map();
 let ATTACHMENT_META_LOADED = false;
 let ATTACHMENT_READ_TOKEN = null;
 let ATTACHMENT_READ_TOKEN_AT = 0;
-const RESPONSABLE_SAVE_QUEUES = new Map();
+const PEOPLE_SAVE_QUEUES = new Map();
 const LABEL_SAVE_QUEUES = new Map();
+const CHECKLIST_SAVE_QUEUES = new Map();
 const COMMENT_SAVE_QUEUES = new Map();
 const NOTES_SAVE_QUEUES = new Map();
 const NOTES_SAVE_TIMERS = new Map();
@@ -60,11 +61,14 @@ window.addEventListener('load', async () => {
             WidgetSDK.newItem('rotation', true, 'Inclinaison des cartes', 'Donner un léger effet post-it aux cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('compact', false, 'Mode compact', 'Réduire les espacements et la hauteur des cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('showlabels', true, 'Afficher les étiquettes', 'Afficher les étiquettes colorées sur les cartes.', '2 — Affichage des cartes'),
-            WidgetSDK.newItem('showmembers', true, 'Afficher les responsables', 'Afficher les bulles d’initiales sur les cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showmembers', true, 'Afficher les membres', 'Afficher les bulles d’initiales des membres sur les cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showresponsables', true, 'Afficher les responsables', 'Afficher les responsables avec une bordure renforcée sur les cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('showdeadline', true, 'Afficher l’échéance', 'Afficher la date limite sur les cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('showindicators', true, 'Afficher les indicateurs', 'Afficher le nombre de pièces jointes et de commentaires.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showchecklistprogress', true, 'Afficher la progression checklist', 'Afficher le nombre d’éléments cochés sur les cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('defaultcardcolor', '#FFFFD1', 'Couleur par défaut', 'Couleur utilisée lorsqu’aucune couleur personnalisée n’est enregistrée.', '2 — Affichage des cartes'),
 
+            WidgetSDK.newItem('showchecklist', true, 'Checklist', 'Afficher la checklist avancée dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showattachments', true, 'Pièces jointes', 'Afficher la section des pièces jointes dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showcomments', true, 'Commentaires', 'Afficher la section des commentaires dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem(
@@ -97,9 +101,12 @@ window.addEventListener('load', async () => {
             {name: 'DESCRIPTION', title: 'Nom de la tâche', description: 'Nom principal de la tâche', type: 'Any'},
             {name: 'DESCRIPTION_DISPLAY', title: 'Affichage de la tâche', description: 'Contenu personnalisé facultatif affiché sur la carte', type: 'Any', optional: true},
             {name: 'NOTES', title: 'Notes', description: 'Notes enrichies enregistrées en HTML sécurisé', type: 'Text', strictType: true, optional: true},
-            {name: 'DEADLINE', title: 'Échéance', description: 'Date limite ou ordre de priorité', type: 'Date', optional: true},
-            {name: 'RESPONSABLE', title: 'Responsables', description: 'Personnes responsables de la tâche', type: 'RefList', strictType: true, optional: true},
+            {name: 'DEADLINE', title: 'Échéance', description: 'Date limite de la carte', type: 'Date', optional: true},
+            {name: 'ORDRE', title: 'Ordre manuel', description: 'Nombre utilisé pour conserver exactement la position des cartes', type: 'Numeric', strictType: true, optional: true},
+            {name: 'MEMBRES', title: 'Membres', description: 'Toutes les personnes qui participent à la carte', type: 'RefList', strictType: true, optional: true},
+            {name: 'RESPONSABLE', title: 'Responsables', description: 'Responsables principaux de la carte', type: 'RefList', strictType: true, optional: true},
             {name: 'ETIQUETTES', title: 'Étiquettes', description: 'Étiquettes multiples référencées depuis une table dédiée', type: 'RefList', strictType: true, optional: true},
+            {name: 'CHECKLIST', title: 'Checklist', description: 'Checklist avancée stockée en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'PIECES_JOINTES', title: 'Pièces jointes', description: 'Fichiers et images associés à la tâche', type: 'Attachments', strictType: true, optional: true},
             {name: 'COMMENTAIRES', title: 'Commentaires', description: 'Commentaires du widget stockés en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'COULEUR', title: 'Couleur de carte', description: 'Code hexadécimal choisi depuis le widget', type: 'Text', strictType: true, optional: true},
@@ -110,7 +117,7 @@ window.addEventListener('load', async () => {
         ]
     });
 
-    // mapRef:true fournit les libellés dans RESPONSABLE et les rowId dans RESPONSABLE_id.
+    // mapRef:true fournit les libellés et les rowId pour MEMBRES, RESPONSABLE et ETIQUETTES.
     W.onRecords(afficherKanban, {
         expandRefs: false,
         keepEncoded: false,
@@ -134,15 +141,23 @@ window.addEventListener('load', async () => {
 // ========== CHARGEMENT DES LISTES ==========
 
 async function chargerResponsables(force = false) {
-    if (!W?.map?.RESPONSABLE || !W?.col?.RESPONSABLE) {
+    const directoryMappingKey = W?.map?.MEMBRES
+        ? 'MEMBRES'
+        : (W?.map?.RESPONSABLE ? 'RESPONSABLE' : null);
+
+    if (!directoryMappingKey || !W?.col?.[directoryMappingKey]) {
         viderCacheResponsables();
         return;
     }
 
-    const colMeta = W.col.RESPONSABLE;
-    const cacheKey = `${colMeta.type}:${colMeta.visibleCol}`;
+    const colMeta = W.col[directoryMappingKey];
+    const cacheKey = `${directoryMappingKey}:${colMeta.type}:${colMeta.visibleCol}`;
 
-    if (!force && RESPONSABLES_LOADED_FOR === cacheKey && RESPONSABLES.length > 0) {
+    if (
+        !force &&
+        RESPONSABLES_LOADED_FOR === cacheKey &&
+        RESPONSABLES.length > 0
+    ) {
         return;
     }
 
@@ -202,7 +217,7 @@ async function chargerResponsables(force = false) {
         RESPONSABLES_LOADED_FOR = cacheKey;
     } catch (error) {
         viderCacheResponsables();
-        console.error('Impossible de charger la table des responsables :', error);
+        console.error('Impossible de charger la table des membres :', error);
     }
 }
 
@@ -644,12 +659,16 @@ function creerCarteTodo(todo) {
     card.dataset.todoId = String(todo.id);
     card.dataset.lastUpdate = serialiserDate(todo.DERNIERE_MISE_A_JOUR);
     card.dataset.deadline = serialiserDate(todo.DEADLINE);
+    card.dataset.order = valeurOrdreCarte(todo.ORDRE);
 
     appliquerCouleurCarte(card, todo.COULEUR);
 
     const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
+    const membres = obtenirMembres(todo);
     const responsables = obtenirResponsables(todo);
     const etiquettes = obtenirEtiquettes(todo);
+    const checklist = parserChecklist(todo.CHECKLIST);
+    const checklistDone = checklist.filter((item) => item.done).length;
     const attachmentCount = normaliserIdsListe(todo.PIECES_JOINTES).length;
     const commentCount = parserCommentaires(todo.COMMENTAIRES).length;
 
@@ -661,15 +680,12 @@ function creerCarteTodo(todo) {
         .map((item) => construireBadgeEtiquette(item))
         .join('');
 
+    const membresHtml = membres
+        .map((person) => construireAvatarCarte(person, 'member'))
+        .join('');
+
     const responsablesHtml = responsables
-        .map((person) => `
-            <span
-                class="responsable-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-                title="${echapperAttribut(person.label)}"
-                aria-label="${echapperAttribut(person.label)}"
-            >${echapperHtml(person.initials)}</span>
-        `)
+        .map((person) => construireAvatarCarte(person, 'responsable'))
         .join('');
 
     const columnOption = getColumnOptionByStatus(todo.STATUT);
@@ -680,18 +696,40 @@ function creerCarteTodo(todo) {
 
     const showLabels = W.opt.showlabels !== false;
     const showMembers = W.opt.showmembers !== false;
+    const showResponsables = W.opt.showresponsables !== false;
     const showDeadline = W.opt.showdeadline !== false;
     const showIndicators = W.opt.showindicators !== false;
+    const showChecklistProgress = W.opt.showchecklistprogress !== false;
+
+    const peopleHtml = `
+        ${(showResponsables && responsables.length)
+            ? `<div class="card-people-group card-responsables" aria-label="Responsables">${responsablesHtml}</div>`
+            : ''}
+        ${(showMembers && membres.length)
+            ? `<div class="card-people-group card-membres" aria-label="Membres">${membresHtml}</div>`
+            : ''}
+    `;
+
+    const indicatorsHtml = `
+        ${(showChecklistProgress && checklist.length)
+            ? `<span title="${checklistDone} élément(s) terminé(s) sur ${checklist.length}">☑ ${checklistDone}/${checklist.length}</span>`
+            : ''}
+        ${(showIndicators && attachmentCount)
+            ? `<span title="${attachmentCount} pièce(s) jointe(s)">📎 ${attachmentCount}</span>`
+            : ''}
+        ${(showIndicators && commentCount)
+            ? `<span title="${commentCount} commentaire(s)">💬 ${commentCount}</span>`
+            : ''}
+    `;
 
     card.innerHTML = `
         ${(showLabels && labelsHtml) ? `<div class="etiquettes-list">${labelsHtml}</div>` : ''}
         <div class="description">${description}</div>
         ${(showDeadline && deadline) ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>` : ''}
-        ${(showMembers && responsables.length) ? `<div class="responsables-list" aria-label="Responsables">${responsablesHtml}</div>` : ''}
-        ${(showIndicators && (attachmentCount || commentCount))
-            ? `<div class="card-indicators">
-                ${attachmentCount ? `<span title="${attachmentCount} pièce(s) jointe(s)">📎 ${attachmentCount}</span>` : ''}
-                ${commentCount ? `<span title="${commentCount} commentaire(s)">💬 ${commentCount}</span>` : ''}
+        ${((showMembers && membres.length) || (showResponsables && responsables.length) || indicatorsHtml.trim())
+            ? `<div class="card-footer">
+                <div class="card-indicators">${indicatorsHtml}</div>
+                <div class="card-people">${peopleHtml}</div>
                </div>`
             : ''}
         ${columnOption?.isdone
@@ -716,6 +754,18 @@ function creerCarteTodo(todo) {
     });
 
     return card;
+}
+
+function construireAvatarCarte(person, role = 'member') {
+    const roleLabel = role === 'responsable' ? 'Responsable' : 'Membre';
+    return `
+        <span
+            class="responsable-avatar ${role === 'responsable' ? 'responsable-avatar-principal' : 'membre-avatar'}"
+            style="background:${echapperAttribut(person.avatarColor)}"
+            title="${echapperAttribut(`${roleLabel} : ${person.label}`)}"
+            aria-label="${echapperAttribut(`${roleLabel} : ${person.label}`)}"
+        >${echapperHtml(person.initials)}</span>
+    `;
 }
 
 function construireBadgeEtiquette(item) {
@@ -753,20 +803,47 @@ function initialiserTriEtGlisserDeposer() {
             onEnd: async (event) => {
                 const targetStatus = event.to.dataset.statut;
                 const sourceStatus = event.from.dataset.statut;
-                const cardId = event.item.dataset.todoId;
+                const cardId = Number(event.item.dataset.todoId);
+
+                const targetIds = Array.from(
+                    event.to.querySelectorAll('.carte')
+                ).map((card) => Number(card.dataset.todoId));
+
+                const sourceIds = event.from === event.to
+                    ? []
+                    : Array.from(
+                        event.from.querySelectorAll('.carte')
+                    ).map((card) => Number(card.dataset.todoId));
 
                 try {
                     if (targetStatus !== sourceStatus) {
                         await mettreAJourChamp(cardId, 'STATUT', targetStatus);
-                    } else if (event.oldIndex !== event.newIndex) {
+                    }
+
+                    if (
+                        W.map?.ORDRE &&
+                        !W.col.ORDRE.getIsFormula()
+                    ) {
+                        await sauvegarderOrdreListes(
+                            targetIds,
+                            sourceIds
+                        );
+                    } else {
+                        /*
+                         * Compatibilité avec les anciennes tables.
+                         * Pour conserver exactement la position après rechargement,
+                         * il faut mapper une colonne numérique sur ORDRE.
+                         */
                         await mettreAJourOrdreParDeadline(event.to);
+                        if (event.from !== event.to) {
+                            await mettreAJourOrdreParDeadline(event.from);
+                        }
                     }
                 } catch (error) {
                     console.error(T('Error during status update:'), error);
                     await afficherKanban(RECS);
                 }
 
-                trierTodo(event.to);
                 mettreAJourCompteur(event.to.closest('.colonne-kanban'));
                 if (event.from !== event.to) {
                     mettreAJourCompteur(event.from.closest('.colonne-kanban'));
@@ -776,8 +853,57 @@ function initialiserTriEtGlisserDeposer() {
     });
 }
 
+async function sauvegarderOrdreListes(targetIds, sourceIds = []) {
+    const uniqueLists = [];
+    const seen = new Set();
+
+    [targetIds, sourceIds].forEach((ids) => {
+        const normalized = normaliserTableau(ids)
+            .map(Number)
+            .filter((id) => Number.isInteger(id) && id > 0);
+
+        const key = normalized.join(',');
+        if (normalized.length > 0 && !seen.has(key)) {
+            seen.add(key);
+            uniqueLists.push(normalized);
+        }
+    });
+
+    for (const ids of uniqueLists) {
+        await sauvegarderOrdreIds(ids);
+    }
+}
+
+async function sauvegarderOrdreIds(ids) {
+    if (
+        !W.map?.ORDRE ||
+        W.col.ORDRE.getIsFormula()
+    ) {
+        return;
+    }
+
+    const records = ids.map((rowId, index) => {
+        const order = (index + 1) * 1000;
+        const record = trouverRecord(rowId);
+        const card = trouverCarteParId(rowId);
+
+        if (record) {
+            record.ORDRE = order;
+        }
+        if (card) {
+            card.dataset.order = String(order);
+        }
+
+        return W.formatRecord(rowId, {ORDRE: order});
+    });
+
+    if (records.length > 0) {
+        await W.updateRecords(records);
+    }
+}
+
 async function mettreAJourOrdreParDeadline(column) {
-    if (!W.map?.DEADLINE) {
+    if (!W.map?.DEADLINE || !column) {
         return;
     }
 
@@ -813,10 +939,13 @@ function trierTodo(container) {
     cards.sort((a, b) => {
         let delta = 0;
 
-        if (W.map?.DEADLINE) {
+        if (W.map?.ORDRE) {
+            delta = ordreTriCarte(a.dataset.order)
+                - ordreTriCarte(b.dataset.order);
+        } else if (W.map?.DEADLINE) {
             if (isDone) {
-                // La date de dernière mise à jour reste uniquement technique pour le tri.
-                delta = toSortableTimestamp(b.dataset.lastUpdate, 0) - toSortableTimestamp(a.dataset.lastUpdate, 0);
+                delta = toSortableTimestamp(b.dataset.lastUpdate, 0)
+                    - toSortableTimestamp(a.dataset.lastUpdate, 0);
             } else {
                 delta = toSortableTimestamp(a.dataset.deadline, Number.MAX_SAFE_INTEGER)
                     - toSortableTimestamp(b.dataset.deadline, Number.MAX_SAFE_INTEGER);
@@ -829,6 +958,18 @@ function trierTodo(container) {
     });
 
     cards.forEach((card) => container.appendChild(card));
+}
+
+function valeurOrdreCarte(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(number) : '';
+}
+
+function ordreTriCarte(value) {
+    const number = Number(value);
+    return Number.isFinite(number)
+        ? number
+        : Number.MAX_SAFE_INTEGER;
 }
 
 function mettreAJourCompteur(column) {
@@ -912,11 +1053,26 @@ async function togglePopupTodo(todo) {
         fields.push(construireChampEtiquettes(todo));
     }
 
+    if (W.map?.MEMBRES) {
+        fields.push(construireChampPersonnes(
+            todo.id,
+            obtenirIdsMembres(todo),
+            'MEMBRES',
+            'Membres',
+            'membre',
+            'membres',
+            W.col.MEMBRES.getIsFormula()
+        ));
+    }
+
     if (W.map?.RESPONSABLE) {
-        fields.push(insererChampResponsables(
+        fields.push(construireChampPersonnes(
             todo.id,
             obtenirIdsResponsables(todo),
-            W.map.RESPONSABLE,
+            'RESPONSABLE',
+            'Responsables',
+            'responsable',
+            'responsables',
             W.col.RESPONSABLE.getIsFormula()
         ));
     }
@@ -941,6 +1097,10 @@ async function togglePopupTodo(todo) {
     }
 
     let form = `<div class="form-grid">${fields.join('')}</div>`;
+
+    if (W.map?.CHECKLIST && W.opt.showchecklist !== false) {
+        form += construireSectionChecklist(todo);
+    }
 
     if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
         form += construireSectionPiecesJointes(todo);
@@ -969,7 +1129,14 @@ async function togglePopupTodo(todo) {
 
     content.innerHTML = form;
     content.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
+    content
+        .querySelectorAll('.etiquettes-dropdown')
+        .forEach(mettreAJourMessageOptionsEtiquettes);
     popup.classList.add('visible');
+
+    if (W.map?.CHECKLIST && W.opt.showchecklist !== false) {
+        initialiserChecklistSortable(content);
+    }
 
     if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
         await rafraichirPiecesJointes(todo.id);
@@ -1758,21 +1925,50 @@ function reinitialiserCouleur(button, event) {
     mettreAJourCouleur(rowId, '', button, event);
 }
 
-// ========== RESPONSABLES ET ÉTIQUETTES (REFLIST) ==========
+// ========== MEMBRES, RESPONSABLES ET ÉTIQUETTES (REFLIST) ==========
 
-function insererChampResponsables(id, selectedIds, title, disabled) {
-    const selection = new Set(normaliserIdsRefList(selectedIds));
+function construireChampPersonnes(
+    rowId,
+    selectedIds,
+    mappingKey,
+    title,
+    singularLabel,
+    pluralLabel,
+    disabled
+) {
+    const selection = new Set(
+        normaliserIdsRefList(selectedIds)
+    );
+
     const options = RESPONSABLES.map((person) => `
-        <label class="multi-option responsable-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
+        <label
+            class="multi-option personne-option"
+            data-search="${echapperAttribut(
+                `${person.label} ${person.email || ''}`
+                    .toLocaleLowerCase(W.cultureFull)
+            )}"
+        >
             <input
                 type="checkbox"
                 value="${person.id}"
                 ${selection.has(person.id) ? 'checked' : ''}
-                onchange="mettreAJourChampResponsables(${Number(id)}, this.closest('.multi-dropdown'), event)"
+                onchange="mettreAJourChampPersonnes(
+                    ${Number(rowId)},
+                    '${echapperJs(mappingKey)}',
+                    this.closest('.multi-dropdown'),
+                    '${echapperJs(singularLabel)}',
+                    '${echapperJs(pluralLabel)}',
+                    event
+                )"
                 ${disabled ? 'disabled' : ''}
             >
-            <span class="responsable-option-avatar" style="background:${echapperAttribut(person.avatarColor)}">${echapperHtml(person.initials)}</span>
-            <span class="responsable-option-name">${echapperHtml(person.label)}</span>
+            <span
+                class="responsable-option-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+            >${echapperHtml(person.initials)}</span>
+            <span class="responsable-option-name">
+                ${echapperHtml(person.label)}
+            </span>
         </label>
     `).join('');
 
@@ -1783,8 +1979,20 @@ function insererChampResponsables(id, selectedIds, title, disabled) {
     return `
         <div class="field field-responsables">
             <label class="field-label">${echapperHtml(title)}</label>
-            <details class="multi-dropdown responsables-dropdown" data-row-id="${Number(id)}">
-                <summary>${echapperHtml(resumeResponsables(selectedLabels))}</summary>
+            <details
+                class="multi-dropdown personnes-dropdown"
+                data-row-id="${Number(rowId)}"
+                data-mapping-key="${echapperAttribut(mappingKey)}"
+            >
+                <summary>
+                    ${echapperHtml(
+                        resumePersonnes(
+                            selectedLabels,
+                            singularLabel,
+                            pluralLabel
+                        )
+                    )}
+                </summary>
                 <div class="multi-dropdown-menu">
                     <div class="multi-toolbar">
                         <input
@@ -1795,9 +2003,22 @@ function insererChampResponsables(id, selectedIds, title, disabled) {
                             onclick="event.stopPropagation()"
                             ${disabled ? 'disabled' : ''}
                         >
-                        <button type="button" class="multi-clear" onclick="viderResponsables(this, event)" ${disabled ? 'disabled' : ''}>Effacer</button>
+                        <button
+                            type="button"
+                            class="multi-clear"
+                            onclick="viderChampPersonnes(
+                                this,
+                                '${echapperJs(mappingKey)}',
+                                '${echapperJs(singularLabel)}',
+                                '${echapperJs(pluralLabel)}',
+                                event
+                            )"
+                            ${disabled ? 'disabled' : ''}
+                        >Effacer</button>
                     </div>
-                    <div class="multi-options">${options || '<div class="multi-empty">Aucun membre disponible</div>'}</div>
+                    <div class="multi-options">
+                        ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
+                    </div>
                     <div class="multi-status" aria-live="polite"></div>
                 </div>
             </details>
@@ -1805,95 +2026,213 @@ function insererChampResponsables(id, selectedIds, title, disabled) {
     `;
 }
 
-function resumeResponsables(labels) {
+function resumePersonnes(labels, singularLabel, pluralLabel) {
     const values = normaliserListeTexte(labels);
+
     if (values.length === 0) return 'Choisir…';
     if (values.length === 1) return values[0];
-    return `${values.length} responsables`;
+
+    return `${values.length} ${pluralLabel || `${singularLabel}s`}`;
 }
 
 function filtrerOptionsMultiples(input) {
     const dropdown = input.closest('.multi-dropdown');
     if (!dropdown) return;
 
-    const query = input.value.trim().toLocaleLowerCase(W.cultureFull);
+    const query = input.value
+        .trim()
+        .toLocaleLowerCase(W.cultureFull);
+
     dropdown.querySelectorAll('.multi-option').forEach((option) => {
-        option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
+        const checkbox = option.querySelector('input[type="checkbox"]');
+        const hideSelected =
+            option.dataset.hideWhenSelected === 'true' &&
+            checkbox?.checked;
+
+        const hideForSearch =
+            query !== '' &&
+            !valeurTexte(option.dataset.search).includes(query);
+
+        option.hidden = Boolean(hideSelected || hideForSearch);
     });
+
+    mettreAJourMessageOptionsEtiquettes(dropdown);
 }
 
-function viderResponsables(button, event) {
+function viderChampPersonnes(
+    button,
+    mappingKey,
+    singularLabel,
+    pluralLabel,
+    event
+) {
     event?.preventDefault();
     event?.stopPropagation();
 
     const dropdown = button.closest('.multi-dropdown');
     if (!dropdown) return;
 
-    dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
-        checkbox.checked = false;
-    });
+    dropdown
+        .querySelectorAll('input[type="checkbox"]:checked')
+        .forEach((checkbox) => {
+            checkbox.checked = false;
+        });
 
-    mettreAJourChampResponsables(Number(dropdown.dataset.rowId), dropdown, event);
+    mettreAJourChampPersonnes(
+        Number(dropdown.dataset.rowId),
+        mappingKey,
+        dropdown,
+        singularLabel,
+        pluralLabel,
+        event
+    );
 }
 
-async function mettreAJourChampResponsables(rowId, dropdown, event) {
+async function mettreAJourChampPersonnes(
+    rowId,
+    mappingKey,
+    dropdown,
+    singularLabel,
+    pluralLabel,
+    event
+) {
     event?.stopPropagation();
 
-    const resolvedRowId = Number(rowId || dropdown?.dataset?.rowId);
-    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) return;
+    const resolvedRowId = Number(
+        rowId || dropdown?.dataset?.rowId
+    );
 
-    const ids = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+    if (
+        !Number.isInteger(resolvedRowId) ||
+        resolvedRowId <= 0 ||
+        !dropdown
+    ) {
+        return;
+    }
+
+    const ids = Array.from(
+        dropdown.querySelectorAll(
+            'input[type="checkbox"]:checked'
+        )
+    )
         .map((input) => Number(input.value))
-        .filter((id) => Number.isInteger(id) && id > 0 && RESPONSABLES_BY_ID.has(id));
+        .filter((id) =>
+            Number.isInteger(id) &&
+            id > 0 &&
+            RESPONSABLES_BY_ID.has(id)
+        );
 
-    const labels = ids.map((id) => RESPONSABLES_BY_ID.get(id).label);
-    dropdown.querySelector('summary').textContent = resumeResponsables(labels);
-    setMultiStatus(dropdown, 'saving', 'Enregistrement…');
+    const labels = ids
+        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
+        .filter(Boolean);
 
-    const previous = RESPONSABLE_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const summary = dropdown.querySelector('summary');
+    if (summary) {
+        summary.textContent = resumePersonnes(
+            labels,
+            singularLabel,
+            pluralLabel
+        );
+    }
+
+    setMultiStatus(
+        dropdown,
+        'saving',
+        'Enregistrement…'
+    );
+
+    const queueKey = `${mappingKey}:${resolvedRowId}`;
+    const previous =
+        PEOPLE_SAVE_QUEUES.get(queueKey) ||
+        Promise.resolve();
+
     const next = previous
         .catch(() => undefined)
-        .then(() => ecrireReferenceMultiple(resolvedRowId, 'RESPONSABLE', ids))
+        .then(() =>
+            ecrireReferenceMultiple(
+                resolvedRowId,
+                mappingKey,
+                ids
+            )
+        )
         .then(() => {
-            mettreAJourResponsablesLocaux(resolvedRowId, ids);
-            setMultiStatus(dropdown, 'saved', 'Enregistré');
-            window.setTimeout(() => setMultiStatus(dropdown, '', ''), 1200);
+            mettreAJourPersonnesLocales(
+                resolvedRowId,
+                mappingKey,
+                ids
+            );
+            setMultiStatus(
+                dropdown,
+                'saved',
+                'Enregistré'
+            );
+            window.setTimeout(
+                () => setMultiStatus(dropdown, '', ''),
+                1200
+            );
         })
         .catch((error) => {
-            setMultiStatus(dropdown, 'error', 'Échec de l’enregistrement');
-            console.error('Erreur lors de l’enregistrement des responsables :', error);
+            setMultiStatus(
+                dropdown,
+                'error',
+                'Échec de l’enregistrement'
+            );
+            console.error(
+                `Erreur lors de l’enregistrement de ${mappingKey} :`,
+                error
+            );
         })
         .finally(() => {
-            if (RESPONSABLE_SAVE_QUEUES.get(resolvedRowId) === next) {
-                RESPONSABLE_SAVE_QUEUES.delete(resolvedRowId);
+            if (PEOPLE_SAVE_QUEUES.get(queueKey) === next) {
+                PEOPLE_SAVE_QUEUES.delete(queueKey);
             }
         });
 
-    RESPONSABLE_SAVE_QUEUES.set(resolvedRowId, next);
+    PEOPLE_SAVE_QUEUES.set(queueKey, next);
     await next;
 }
 
-function mettreAJourResponsablesLocaux(rowId, ids) {
+function mettreAJourPersonnesLocales(
+    rowId,
+    mappingKey,
+    ids
+) {
     const record = trouverRecord(rowId);
     if (!record) return;
 
-    record.RESPONSABLE_id = [...ids];
-    record.RESPONSABLE = ids
+    record[`${mappingKey}_id`] = [...ids];
+    record[mappingKey] = ids
         .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
         .filter(Boolean);
 }
 
 function construireChampEtiquettes(todo) {
-    const selection = new Set(obtenirIdsEtiquettes(todo));
+    const selectedIds = obtenirIdsEtiquettes(todo);
+    const selection = new Set(selectedIds);
     const disabled = W.col.ETIQUETTES.getIsFormula();
 
+    const selectedItems = selectedIds
+        .map((id) => ETIQUETTES_BY_ID.get(id))
+        .filter(Boolean);
+
     const options = ETIQUETTES.map((item) => `
-        <label class="multi-option etiquette-option" data-search="${echapperAttribut(item.label.toLocaleLowerCase(W.cultureFull))}">
+        <label
+            class="multi-option etiquette-option"
+            data-hide-when-selected="true"
+            data-search="${echapperAttribut(
+                item.label.toLocaleLowerCase(W.cultureFull)
+            )}"
+            ${selection.has(item.id) ? 'hidden' : ''}
+        >
             <input
                 type="checkbox"
                 value="${item.id}"
                 ${selection.has(item.id) ? 'checked' : ''}
-                onchange="mettreAJourEtiquettes(${Number(todo.id)}, this.closest('.multi-dropdown'), event)"
+                onchange="mettreAJourEtiquettes(
+                    ${Number(todo.id)},
+                    this.closest('.multi-dropdown'),
+                    event
+                )"
                 ${disabled ? 'disabled' : ''}
             >
             <span
@@ -1903,40 +2242,95 @@ function construireChampEtiquettes(todo) {
         </label>
     `).join('');
 
-    const selectedLabels = [...selection]
-        .map((id) => ETIQUETTES_BY_ID.get(id)?.label)
-        .filter(Boolean);
-
     return `
-        <div class="field field-etiquettes">
-            <label class="field-label">Étiquettes</label>
-            <details class="multi-dropdown etiquettes-dropdown" data-row-id="${Number(todo.id)}">
-                <summary>${echapperHtml(resumeEtiquettes(selectedLabels))}</summary>
-                <div class="multi-dropdown-menu">
-                    <div class="multi-toolbar">
-                        <input
-                            type="search"
-                            class="multi-search"
-                            placeholder="Rechercher…"
-                            oninput="filtrerOptionsMultiples(this)"
-                            onclick="event.stopPropagation()"
-                            ${disabled ? 'disabled' : ''}
-                        >
-                        <button type="button" class="multi-clear" onclick="viderEtiquettes(this, event)" ${disabled ? 'disabled' : ''}>Effacer</button>
-                    </div>
-                    <div class="multi-options">${options || '<div class="multi-empty">Ajoutez des lignes dans la table référencée par Étiquettes</div>'}</div>
-                    <div class="multi-status" aria-live="polite"></div>
-                </div>
-            </details>
+        <div
+            class="field field-etiquettes"
+            data-row-id="${Number(todo.id)}"
+        >
+            <div class="etiquettes-field-header">
+                <label class="field-label">Étiquettes</label>
+                ${disabled ? '' : `
+                    <details
+                        class="multi-dropdown etiquettes-dropdown etiquettes-picker"
+                        data-row-id="${Number(todo.id)}"
+                    >
+                        <summary
+                            class="etiquettes-add-button"
+                            title="Ajouter une étiquette"
+                            aria-label="Ajouter une étiquette"
+                        >+</summary>
+                        <div class="multi-dropdown-menu">
+                            <div class="multi-toolbar">
+                                <input
+                                    type="search"
+                                    class="multi-search"
+                                    placeholder="Rechercher une étiquette…"
+                                    oninput="filtrerOptionsMultiples(this)"
+                                    onclick="event.stopPropagation()"
+                                >
+                                <button
+                                    type="button"
+                                    class="multi-clear"
+                                    onclick="viderEtiquettes(this, event)"
+                                >Tout retirer</button>
+                            </div>
+                            <div class="multi-options">
+                                ${options || '<div class="multi-empty">Ajoutez des lignes dans la table référencée par Étiquettes</div>'}
+                                <div class="multi-all-selected" hidden>
+                                    Toutes les étiquettes sont déjà actives.
+                                </div>
+                            </div>
+                            <div
+                                class="multi-status"
+                                aria-live="polite"
+                            ></div>
+                        </div>
+                    </details>
+                `}
+            </div>
+
+            <div class="etiquettes-actives">
+                ${construireEtiquettesActives(
+                    selectedItems,
+                    todo.id,
+                    disabled
+                )}
+            </div>
         </div>
     `;
 }
 
-function resumeEtiquettes(labels) {
-    const values = normaliserListeTexte(labels);
-    if (values.length === 0) return 'Choisir…';
-    if (values.length === 1) return values[0];
-    return `${values.length} étiquettes`;
+function construireEtiquettesActives(
+    items,
+    rowId,
+    disabled
+) {
+    if (!items.length) {
+        return '<span class="etiquettes-empty">Aucune étiquette</span>';
+    }
+
+    return items.map((item) => `
+        <span
+            class="etiquette-active"
+            style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
+            title="${echapperAttribut(item.label)}"
+        >
+            <span>${echapperHtml(item.label)}</span>
+            ${disabled ? '' : `
+                <button
+                    type="button"
+                    onclick="retirerEtiquetteActive(
+                        ${Number(rowId)},
+                        ${Number(item.id)},
+                        this,
+                        event
+                    )"
+                    title="Retirer ${echapperAttribut(item.label)}"
+                    aria-label="Retirer ${echapperAttribut(item.label)}"
+                >×</button>
+            `}
+        </span>
+    `).join('');
 }
 
 function viderEtiquettes(button, event) {
@@ -1946,48 +2340,200 @@ function viderEtiquettes(button, event) {
     const dropdown = button.closest('.multi-dropdown');
     if (!dropdown) return;
 
-    dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
-        checkbox.checked = false;
-    });
+    dropdown
+        .querySelectorAll('input[type="checkbox"]:checked')
+        .forEach((checkbox) => {
+            checkbox.checked = false;
+        });
 
-    mettreAJourEtiquettes(Number(dropdown.dataset.rowId), dropdown, event);
+    mettreAJourEtiquettes(
+        Number(dropdown.dataset.rowId),
+        dropdown,
+        event
+    );
 }
 
-async function mettreAJourEtiquettes(rowId, dropdown, event) {
+function retirerEtiquetteActive(
+    rowId,
+    labelId,
+    button,
+    event
+) {
+    event?.preventDefault();
     event?.stopPropagation();
 
-    const resolvedRowId = Number(rowId || dropdown?.dataset?.rowId);
-    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) return;
+    const field = button.closest('.field-etiquettes');
+    const dropdown = field?.querySelector(
+        '.etiquettes-dropdown'
+    );
 
-    const ids = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+    if (!dropdown) return;
+
+    const checkbox = dropdown.querySelector(
+        `input[type="checkbox"][value="${Number(labelId)}"]`
+    );
+
+    if (checkbox) {
+        checkbox.checked = false;
+    }
+
+    mettreAJourEtiquettes(
+        Number(rowId),
+        dropdown,
+        event
+    );
+}
+
+async function mettreAJourEtiquettes(
+    rowId,
+    dropdown,
+    event
+) {
+    event?.stopPropagation();
+
+    const resolvedRowId = Number(
+        rowId || dropdown?.dataset?.rowId
+    );
+
+    if (
+        !Number.isInteger(resolvedRowId) ||
+        resolvedRowId <= 0 ||
+        !dropdown
+    ) {
+        return;
+    }
+
+    const ids = Array.from(
+        dropdown.querySelectorAll(
+            'input[type="checkbox"]:checked'
+        )
+    )
         .map((input) => Number(input.value))
-        .filter((id) => Number.isInteger(id) && id > 0 && ETIQUETTES_BY_ID.has(id));
+        .filter((id) =>
+            Number.isInteger(id) &&
+            id > 0 &&
+            ETIQUETTES_BY_ID.has(id)
+        );
 
-    const labels = ids.map((id) => ETIQUETTES_BY_ID.get(id).label);
-    dropdown.querySelector('summary').textContent = resumeEtiquettes(labels);
-    setMultiStatus(dropdown, 'saving', 'Enregistrement…');
+    mettreAJourAffichageEtiquettes(
+        dropdown,
+        resolvedRowId,
+        ids
+    );
+    setMultiStatus(
+        dropdown,
+        'saving',
+        'Enregistrement…'
+    );
 
-    const previous = LABEL_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const previous =
+        LABEL_SAVE_QUEUES.get(resolvedRowId) ||
+        Promise.resolve();
+
     const next = previous
         .catch(() => undefined)
-        .then(() => ecrireReferenceMultiple(resolvedRowId, 'ETIQUETTES', ids))
+        .then(() =>
+            ecrireReferenceMultiple(
+                resolvedRowId,
+                'ETIQUETTES',
+                ids
+            )
+        )
         .then(() => {
-            mettreAJourEtiquettesLocales(resolvedRowId, ids);
-            setMultiStatus(dropdown, 'saved', 'Enregistré');
-            window.setTimeout(() => setMultiStatus(dropdown, '', ''), 1200);
+            mettreAJourEtiquettesLocales(
+                resolvedRowId,
+                ids
+            );
+            setMultiStatus(
+                dropdown,
+                'saved',
+                'Enregistré'
+            );
+            window.setTimeout(
+                () => setMultiStatus(dropdown, '', ''),
+                1200
+            );
         })
         .catch((error) => {
-            setMultiStatus(dropdown, 'error', 'Échec de l’enregistrement');
-            console.error('Erreur lors de l’enregistrement des étiquettes :', error);
+            setMultiStatus(
+                dropdown,
+                'error',
+                'Échec de l’enregistrement'
+            );
+            console.error(
+                'Erreur lors de l’enregistrement des étiquettes :',
+                error
+            );
         })
         .finally(() => {
-            if (LABEL_SAVE_QUEUES.get(resolvedRowId) === next) {
+            if (
+                LABEL_SAVE_QUEUES.get(resolvedRowId) === next
+            ) {
                 LABEL_SAVE_QUEUES.delete(resolvedRowId);
             }
         });
 
     LABEL_SAVE_QUEUES.set(resolvedRowId, next);
     await next;
+}
+
+function mettreAJourAffichageEtiquettes(
+    dropdown,
+    rowId,
+    ids
+) {
+    const field = dropdown.closest('.field-etiquettes');
+    const activeContainer = field?.querySelector(
+        '.etiquettes-actives'
+    );
+    const selected = new Set(ids);
+    const items = ids
+        .map((id) => ETIQUETTES_BY_ID.get(id))
+        .filter(Boolean);
+
+    if (activeContainer) {
+        activeContainer.innerHTML =
+            construireEtiquettesActives(
+                items,
+                rowId,
+                false
+            );
+    }
+
+    dropdown
+        .querySelectorAll('.etiquette-option')
+        .forEach((option) => {
+            const checkbox = option.querySelector(
+                'input[type="checkbox"]'
+            );
+            const checked = selected.has(
+                Number(checkbox?.value)
+            );
+
+            if (checkbox) {
+                checkbox.checked = checked;
+            }
+            option.hidden = checked;
+        });
+
+    mettreAJourMessageOptionsEtiquettes(dropdown);
+}
+
+function mettreAJourMessageOptionsEtiquettes(dropdown) {
+    if (!dropdown?.classList.contains('etiquettes-dropdown')) {
+        return;
+    }
+
+    const message = dropdown.querySelector(
+        '.multi-all-selected'
+    );
+    const visibleOptions = Array.from(
+        dropdown.querySelectorAll('.etiquette-option')
+    ).filter((option) => !option.hidden);
+
+    if (message) {
+        message.hidden = visibleOptions.length > 0;
+    }
 }
 
 function mettreAJourEtiquettesLocales(rowId, ids) {
@@ -2071,6 +2617,683 @@ function setMultiStatus(dropdown, state, message) {
 
     status.className = `multi-status${state ? ` ${state}` : ''}`;
     status.textContent = message;
+}
+
+// ========== CHECKLIST AVANCÉE ==========
+
+function parserChecklist(rawValue) {
+    const raw = valeurTexte(rawValue).trim();
+
+    if (!raw) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        return parsed
+            .map((item, index) => ({
+                id: valeurTexte(item?.id) || `legacy-${index}`,
+                text: valeurTexte(item?.text).trim(),
+                done: Boolean(item?.done),
+                memberIds: normaliserIdsListe(
+                    item?.memberIds || item?.members || []
+                ),
+                dueDate: normaliserDateChecklist(
+                    item?.dueDate
+                ),
+                createdAt: valeurTexte(item?.createdAt)
+            }))
+            .filter((item) => item.text || item.id);
+    } catch (error) {
+        console.warn(
+            'Checklist illisible, valeur ignorée :',
+            error
+        );
+        return [];
+    }
+}
+
+function normaliserDateChecklist(value) {
+    const raw = valeurTexte(value).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw)
+        ? raw
+        : '';
+}
+
+function construireSectionChecklist(todo) {
+    const items = parserChecklist(todo.CHECKLIST);
+    const disabled = W.col.CHECKLIST.getIsFormula();
+    const doneCount = items.filter((item) => item.done).length;
+    const progress = items.length > 0
+        ? Math.round((doneCount / items.length) * 100)
+        : 0;
+
+    return `
+        <section
+            class="detail-section checklist-section"
+            data-row-id="${Number(todo.id)}"
+            data-disabled="${disabled ? 'true' : 'false'}"
+        >
+            <div class="detail-section-header checklist-header">
+                <div>
+                    <h3>☑ Checklist</h3>
+                    <p>
+                        <span class="checklist-progress-text">
+                            ${doneCount}/${items.length} terminé(s)
+                        </span>
+                    </p>
+                </div>
+                <span
+                    class="checklist-progress-percent"
+                    aria-label="${progress}% terminé"
+                >${progress}%</span>
+            </div>
+
+            <div
+                class="checklist-progress"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="${progress}"
+            >
+                <span style="width:${progress}%"></span>
+            </div>
+
+            ${disabled ? '' : `
+                <div class="checklist-add">
+                    <input
+                        type="text"
+                        class="checklist-add-input"
+                        placeholder="Ajouter un élément…"
+                        onkeydown="gererAjoutChecklistClavier(
+                            ${Number(todo.id)},
+                            this,
+                            event
+                        )"
+                    >
+                    <button
+                        type="button"
+                        onclick="ajouterElementChecklist(
+                            ${Number(todo.id)},
+                            this,
+                            event
+                        )"
+                    >Ajouter</button>
+                </div>
+            `}
+
+            <div
+                id="checklist-status-${Number(todo.id)}"
+                class="section-status checklist-status"
+                aria-live="polite"
+            ></div>
+
+            <div
+                class="checklist-items"
+                data-row-id="${Number(todo.id)}"
+            >
+                ${items.length
+                    ? items.map((item) =>
+                        construireItemChecklist(
+                            item,
+                            todo.id,
+                            disabled
+                        )
+                    ).join('')
+                    : '<div class="section-empty checklist-empty">Aucun élément dans la checklist</div>'
+                }
+            </div>
+        </section>
+    `;
+}
+
+function construireItemChecklist(
+    item,
+    rowId,
+    disabled
+) {
+    const assignedPeople = item.memberIds
+        .map((id) => RESPONSABLES_BY_ID.get(id))
+        .filter(Boolean);
+
+    const overdue =
+        !item.done &&
+        item.dueDate &&
+        new Date(`${item.dueDate}T23:59:59`).getTime()
+            < Date.now();
+
+    return `
+        <article
+            class="checklist-item${item.done ? ' done' : ''}${overdue ? ' overdue' : ''}"
+            data-item-id="${echapperAttribut(item.id)}"
+        >
+            ${disabled ? '' : `
+                <button
+                    type="button"
+                    class="checklist-drag-handle"
+                    title="Déplacer"
+                    aria-label="Déplacer"
+                >⋮⋮</button>
+            `}
+
+            <label class="checklist-check">
+                <input
+                    type="checkbox"
+                    ${item.done ? 'checked' : ''}
+                    onchange="mettreAJourElementChecklist(
+                        ${Number(rowId)},
+                        '${echapperJs(item.id)}',
+                        'done',
+                        this.checked,
+                        event
+                    )"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <span aria-hidden="true"></span>
+            </label>
+
+            <div class="checklist-item-content">
+                <textarea
+                    class="checklist-item-text auto-expand"
+                    rows="1"
+                    oninput="ajusterTextarea(this)"
+                    onchange="mettreAJourElementChecklist(
+                        ${Number(rowId)},
+                        '${echapperJs(item.id)}',
+                        'text',
+                        this.value,
+                        event
+                    )"
+                    ${disabled ? 'disabled' : ''}
+                >${echapperHtml(item.text)}</textarea>
+
+                <div class="checklist-item-meta">
+                    <label
+                        class="checklist-due${overdue ? ' overdue' : ''}"
+                        title="${overdue ? 'Échéance dépassée' : 'Date limite'}"
+                    >
+                        <span>📅</span>
+                        <input
+                            type="date"
+                            value="${echapperAttribut(item.dueDate)}"
+                            onchange="mettreAJourElementChecklist(
+                                ${Number(rowId)},
+                                '${echapperJs(item.id)}',
+                                'dueDate',
+                                this.value,
+                                event
+                            )"
+                            ${disabled ? 'disabled' : ''}
+                        >
+                    </label>
+
+                    ${construireAssignationChecklist(
+                        item,
+                        rowId,
+                        assignedPeople,
+                        disabled
+                    )}
+                </div>
+            </div>
+
+            ${disabled ? '' : `
+                <button
+                    type="button"
+                    class="checklist-delete"
+                    onclick="supprimerElementChecklist(
+                        ${Number(rowId)},
+                        '${echapperJs(item.id)}',
+                        event
+                    )"
+                    title="Supprimer l’élément"
+                    aria-label="Supprimer l’élément"
+                >×</button>
+            `}
+        </article>
+    `;
+}
+
+function construireAssignationChecklist(
+    item,
+    rowId,
+    assignedPeople,
+    disabled
+) {
+    const selected = new Set(item.memberIds);
+    const summary = assignedPeople.length
+        ? `
+            <span class="checklist-assignee-avatars">
+                ${assignedPeople
+                    .slice(0, 4)
+                    .map((person) => `
+                        <span
+                            class="checklist-assignee-avatar"
+                            style="background:${echapperAttribut(person.avatarColor)}"
+                            title="${echapperAttribut(person.label)}"
+                        >${echapperHtml(person.initials)}</span>
+                    `)
+                    .join('')}
+                ${assignedPeople.length > 4
+                    ? `<span class="checklist-assignee-more">+${assignedPeople.length - 4}</span>`
+                    : ''
+                }
+            </span>
+        `
+        : '<span class="checklist-assignee-placeholder">👤 Attribuer</span>';
+
+    if (disabled) {
+        return `
+            <div class="checklist-assignees readonly">
+                ${summary}
+            </div>
+        `;
+    }
+
+    const options = RESPONSABLES.map((person) => `
+        <label
+            class="multi-option checklist-person-option"
+            data-search="${echapperAttribut(
+                person.label.toLocaleLowerCase(W.cultureFull)
+            )}"
+        >
+            <input
+                type="checkbox"
+                value="${person.id}"
+                ${selected.has(person.id) ? 'checked' : ''}
+                onchange="mettreAJourAssignationsChecklist(
+                    ${Number(rowId)},
+                    '${echapperJs(item.id)}',
+                    this.closest('.checklist-assignees'),
+                    event
+                )"
+            >
+            <span
+                class="responsable-option-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+            >${echapperHtml(person.initials)}</span>
+            <span class="responsable-option-name">
+                ${echapperHtml(person.label)}
+            </span>
+        </label>
+    `).join('');
+
+    return `
+        <details class="checklist-assignees">
+            <summary>${summary}</summary>
+            <div class="checklist-assignees-menu">
+                <div class="multi-toolbar">
+                    <input
+                        type="search"
+                        class="multi-search"
+                        placeholder="Rechercher…"
+                        oninput="filtrerOptionsChecklist(this)"
+                        onclick="event.stopPropagation()"
+                    >
+                </div>
+                <div class="multi-options">
+                    ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
+                </div>
+            </div>
+        </details>
+    `;
+}
+
+function filtrerOptionsChecklist(input) {
+    const details = input.closest('.checklist-assignees');
+    const query = input.value
+        .trim()
+        .toLocaleLowerCase(W.cultureFull);
+
+    details
+        ?.querySelectorAll('.checklist-person-option')
+        .forEach((option) => {
+            option.hidden =
+                query !== '' &&
+                !valeurTexte(
+                    option.dataset.search
+                ).includes(query);
+        });
+}
+
+function gererAjoutChecklistClavier(
+    rowId,
+    input,
+    event
+) {
+    if (event.key !== 'Enter') {
+        return;
+    }
+
+    event.preventDefault();
+    ajouterElementChecklist(rowId, input, event);
+}
+
+async function ajouterElementChecklist(
+    rowId,
+    trigger,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const section = trigger.closest('.checklist-section');
+    const input = section?.querySelector(
+        '.checklist-add-input'
+    );
+    const text = valeurTexte(input?.value).trim();
+
+    if (!text) {
+        input?.focus();
+        afficherStatutChecklist(
+            rowId,
+            'error',
+            'Saisissez un intitulé.'
+        );
+        return;
+    }
+
+    if (input) {
+        input.value = '';
+    }
+
+    await enregistrerChecklistEnFile(
+        rowId,
+        (items) => [
+            ...items,
+            {
+                id: genererIdentifiant(),
+                text,
+                done: false,
+                memberIds: [],
+                dueDate: '',
+                createdAt: new Date().toISOString()
+            }
+        ],
+        true,
+        'Élément ajouté.'
+    );
+}
+
+async function mettreAJourElementChecklist(
+    rowId,
+    itemId,
+    field,
+    value,
+    event
+) {
+    event?.stopPropagation();
+
+    const normalizedValue =
+        field === 'done'
+            ? Boolean(value)
+            : field === 'dueDate'
+                ? normaliserDateChecklist(value)
+                : valeurTexte(value).trim();
+
+    await enregistrerChecklistEnFile(
+        rowId,
+        (items) =>
+            items.map((item) =>
+                item.id === itemId
+                    ? {
+                        ...item,
+                        [field]: normalizedValue
+                    }
+                    : item
+            ),
+        true,
+        'Checklist enregistrée.'
+    );
+}
+
+async function mettreAJourAssignationsChecklist(
+    rowId,
+    itemId,
+    details,
+    event
+) {
+    event?.stopPropagation();
+
+    const memberIds = Array.from(
+        details.querySelectorAll(
+            'input[type="checkbox"]:checked'
+        )
+    )
+        .map((input) => Number(input.value))
+        .filter((id) =>
+            Number.isInteger(id) &&
+            RESPONSABLES_BY_ID.has(id)
+        );
+
+    await enregistrerChecklistEnFile(
+        rowId,
+        (items) =>
+            items.map((item) =>
+                item.id === itemId
+                    ? {
+                        ...item,
+                        memberIds
+                    }
+                    : item
+            ),
+        true,
+        'Attribution enregistrée.'
+    );
+}
+
+async function supprimerElementChecklist(
+    rowId,
+    itemId,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const record = trouverRecord(rowId);
+    const item = parserChecklist(record?.CHECKLIST)
+        .find((candidate) => candidate.id === itemId);
+
+    if (
+        item?.text &&
+        !window.confirm(
+            `Supprimer « ${item.text} » de la checklist ?`
+        )
+    ) {
+        return;
+    }
+
+    await enregistrerChecklistEnFile(
+        rowId,
+        (items) =>
+            items.filter((candidate) =>
+                candidate.id !== itemId
+            ),
+        true,
+        'Élément supprimé.'
+    );
+}
+
+async function enregistrerChecklistEnFile(
+    rowId,
+    transform,
+    refresh = true,
+    successMessage = 'Checklist enregistrée.'
+) {
+    const resolvedRowId = Number(rowId);
+    const previous =
+        CHECKLIST_SAVE_QUEUES.get(resolvedRowId) ||
+        Promise.resolve();
+
+    afficherStatutChecklist(
+        resolvedRowId,
+        'saving',
+        'Enregistrement…'
+    );
+
+    const next = previous
+        .catch(() => undefined)
+        .then(async () => {
+            const record = trouverRecord(resolvedRowId);
+            const current = parserChecklist(
+                record?.CHECKLIST
+            );
+            const updated = transform(current)
+                .map((item) => ({
+                    id: valeurTexte(item.id) || genererIdentifiant(),
+                    text: valeurTexte(item.text).trim(),
+                    done: Boolean(item.done),
+                    memberIds: [...new Set(
+                        normaliserIdsListe(item.memberIds)
+                    )],
+                    dueDate: normaliserDateChecklist(
+                        item.dueDate
+                    ),
+                    createdAt: valeurTexte(
+                        item.createdAt
+                    ) || new Date().toISOString()
+                }));
+
+            await mettreAJourChamp(
+                resolvedRowId,
+                'CHECKLIST',
+                JSON.stringify(updated)
+            );
+
+            return updated;
+        })
+        .then((updated) => {
+            if (refresh) {
+                rafraichirChecklist(
+                    resolvedRowId,
+                    updated
+                );
+            }
+            afficherStatutChecklist(
+                resolvedRowId,
+                'saved',
+                successMessage
+            );
+            return updated;
+        })
+        .catch((error) => {
+            afficherStatutChecklist(
+                resolvedRowId,
+                'error',
+                'Impossible d’enregistrer la checklist.'
+            );
+            console.error(
+                'Erreur pendant l’enregistrement de la checklist :',
+                error
+            );
+            throw error;
+        })
+        .finally(() => {
+            if (
+                CHECKLIST_SAVE_QUEUES.get(resolvedRowId) === next
+            ) {
+                CHECKLIST_SAVE_QUEUES.delete(resolvedRowId);
+            }
+        });
+
+    CHECKLIST_SAVE_QUEUES.set(resolvedRowId, next);
+    return next;
+}
+
+function rafraichirChecklist(rowId, items = null) {
+    const section = document.querySelector(
+        `.checklist-section[data-row-id="${Number(rowId)}"]`
+    );
+    const record = trouverRecord(rowId);
+
+    if (!section || !record) {
+        return;
+    }
+
+    if (items) {
+        record.CHECKLIST = JSON.stringify(items);
+    }
+
+    const replacement = document.createElement('div');
+    replacement.innerHTML =
+        construireSectionChecklist(record);
+
+    const nextSection = replacement.firstElementChild;
+    section.replaceWith(nextSection);
+    initialiserChecklistSortable(nextSection.parentElement);
+}
+
+function afficherStatutChecklist(
+    rowId,
+    state,
+    message
+) {
+    const status = document.getElementById(
+        `checklist-status-${Number(rowId)}`
+    );
+
+    if (!status) {
+        return;
+    }
+
+    status.className =
+        `section-status checklist-status${state ? ` ${state}` : ''}`;
+    status.textContent = message;
+}
+
+function initialiserChecklistSortable(root = document) {
+    if (
+        typeof Sortable !== 'function' ||
+        W.opt.readonly
+    ) {
+        return;
+    }
+
+    root
+        .querySelectorAll(
+            '.checklist-section[data-disabled="false"] .checklist-items'
+        )
+        .forEach((list) => {
+            if (list.dataset.sortableReady === 'true') {
+                return;
+            }
+
+            list.dataset.sortableReady = 'true';
+
+            new Sortable(list, {
+                animation: 140,
+                handle: '.checklist-drag-handle',
+                ghostClass: 'checklist-item-ghost',
+                chosenClass: 'checklist-item-chosen',
+                onEnd: async () => {
+                    const rowId = Number(list.dataset.rowId);
+                    const orderedIds = Array.from(
+                        list.querySelectorAll('.checklist-item')
+                    ).map((item) => item.dataset.itemId);
+
+                    await enregistrerChecklistEnFile(
+                        rowId,
+                        (items) => {
+                            const byId = new Map(
+                                items.map((item) => [
+                                    item.id,
+                                    item
+                                ])
+                            );
+
+                            return orderedIds
+                                .map((id) => byId.get(id))
+                                .filter(Boolean);
+                        },
+                        true,
+                        'Ordre de la checklist enregistré.'
+                    );
+                }
+            });
+        });
 }
 
 // ========== PIÈCES JOINTES ==========
@@ -3144,6 +4367,8 @@ async function creerNouvelleTache(status) {
         if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
         if (W.map?.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
         if (W.map?.COMMENTAIRES && !W.col.COMMENTAIRES.getIsFormula()) data.COMMENTAIRES = '[]';
+        if (W.map?.CHECKLIST && !W.col.CHECKLIST.getIsFormula()) data.CHECKLIST = '[]';
+        if (W.map?.ORDRE && !W.col.ORDRE.getIsFormula()) data.ORDRE = prochainOrdrePourStatut(status);
 
         const result = await W.createRecords({fields: data});
         if (result?.id > 0) {
@@ -3221,11 +4446,15 @@ function ajusterTextarea(textarea) {
 }
 
 function fermerTousLesMenusMultiples(except = null) {
-    document.querySelectorAll('.multi-dropdown[open]').forEach((details) => {
-        if (details !== except) {
-            details.removeAttribute('open');
-        }
-    });
+    document
+        .querySelectorAll(
+            '.multi-dropdown[open], .checklist-assignees[open]'
+        )
+        .forEach((details) => {
+            if (details !== except) {
+                details.removeAttribute('open');
+            }
+        });
 }
 
 document.addEventListener('keydown', (event) => {
@@ -3239,7 +4468,7 @@ document.addEventListener('keydown', (event) => {
         return;
     }
 
-    const openedDropdown = document.querySelector('.multi-dropdown[open]');
+    const openedDropdown = document.querySelector('.multi-dropdown[open], .checklist-assignees[open]');
     if (openedDropdown) {
         openedDropdown.removeAttribute('open');
     } else {
@@ -3248,7 +4477,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('click', (event) => {
-    const openedDropdown = event.target.closest('.multi-dropdown');
+    const openedDropdown = event.target.closest('.multi-dropdown, .checklist-assignees');
     if (W?.opt?.autoclosemenus !== false) {
         fermerTousLesMenusMultiples(openedDropdown);
     }
@@ -3298,30 +4527,61 @@ function getColumnStorageKey(status) {
     return `column-todo-${valeurTexte(status)}`;
 }
 
-function obtenirIdsResponsables(todo) {
-    const directIds = normaliserIdsRefList(todo?.RESPONSABLE_id);
+function prochainOrdrePourStatut(status) {
+    const orders = RECS
+        .filter((record) =>
+            valeurTexte(record.STATUT) === valeurTexte(status)
+        )
+        .map((record) => Number(record.ORDRE))
+        .filter(Number.isFinite);
+
+    return orders.length > 0
+        ? Math.max(...orders) + 1000
+        : 1000;
+}
+
+function obtenirIdsPersonnes(todo, mappingKey) {
+    const directIds = normaliserIdsRefList(
+        todo?.[`${mappingKey}_id`]
+    );
+
     if (directIds.length > 0) {
         return directIds;
     }
 
-    const labels = normaliserListeTexte(todo?.RESPONSABLE).filter((value) => value !== '#KeyError');
+    const labels = normaliserListeTexte(
+        todo?.[mappingKey]
+    ).filter((value) => value !== '#KeyError');
+
     const available = [...RESPONSABLES];
 
     return labels.flatMap((label) => {
-        const index = available.findIndex((person) => person.label === label);
-        if (index < 0) return [];
+        const index = available.findIndex(
+            (person) => person.label === label
+        );
+
+        if (index < 0) {
+            return [];
+        }
+
         const [person] = available.splice(index, 1);
         return [person.id];
     });
 }
 
-function obtenirResponsables(todo) {
-    const ids = obtenirIdsResponsables(todo);
+function obtenirPersonnes(todo, mappingKey) {
+    const ids = obtenirIdsPersonnes(
+        todo,
+        mappingKey
+    );
+
     if (ids.length > 0) {
-        return ids.map((id) => RESPONSABLES_BY_ID.get(id)).filter(Boolean);
+        return ids
+            .map((id) => RESPONSABLES_BY_ID.get(id))
+            .filter(Boolean);
     }
 
-    return normaliserListeTexte(todo?.RESPONSABLE)
+    return normaliserListeTexte(todo?.[mappingKey])
         .filter((label) => label !== '#KeyError')
         .map((label) => ({
             id: 0,
@@ -3331,8 +4591,25 @@ function obtenirResponsables(todo) {
         }));
 }
 
+function obtenirIdsMembres(todo) {
+    return obtenirIdsPersonnes(todo, 'MEMBRES');
+}
+
+function obtenirMembres(todo) {
+    return obtenirPersonnes(todo, 'MEMBRES');
+}
+
+function obtenirIdsResponsables(todo) {
+    return obtenirIdsPersonnes(todo, 'RESPONSABLE');
+}
+
+function obtenirResponsables(todo) {
+    return obtenirPersonnes(todo, 'RESPONSABLE');
+}
+
 function obtenirLibellesResponsables(todo) {
-    return obtenirResponsables(todo).map((person) => person.label);
+    return obtenirResponsables(todo)
+        .map((person) => person.label);
 }
 
 function obtenirIdsEtiquettes(todo) {
@@ -3583,11 +4860,19 @@ window.fermerPopup = fermerPopup;
 window.mettreAJourChamp = mettreAJourChamp;
 window.creerNouvelleTache = creerNouvelleTache;
 window.supprimerTodo = supprimerTodo;
-window.mettreAJourChampResponsables = mettreAJourChampResponsables;
+window.mettreAJourChampPersonnes = mettreAJourChampPersonnes;
 window.filtrerOptionsMultiples = filtrerOptionsMultiples;
-window.viderResponsables = viderResponsables;
+window.viderChampPersonnes = viderChampPersonnes;
 window.mettreAJourEtiquettes = mettreAJourEtiquettes;
 window.viderEtiquettes = viderEtiquettes;
+window.retirerEtiquetteActive = retirerEtiquetteActive;
+
+window.gererAjoutChecklistClavier = gererAjoutChecklistClavier;
+window.ajouterElementChecklist = ajouterElementChecklist;
+window.mettreAJourElementChecklist = mettreAJourElementChecklist;
+window.mettreAJourAssignationsChecklist = mettreAJourAssignationsChecklist;
+window.supprimerElementChecklist = supprimerElementChecklist;
+window.filtrerOptionsChecklist = filtrerOptionsChecklist;
 window.ajouterPiecesJointes = ajouterPiecesJointes;
 window.retirerPieceJointe = retirerPieceJointe;
 window.ouvrirPieceJointe = ouvrirPieceJointe;

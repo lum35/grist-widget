@@ -1,4 +1,4 @@
-/* ========== KANBAN2 — VERSION 5.2.1 ========== */
+/* ========== KANBAN2 — VERSION 6 ========== */
 
 :root {
     --border-radius: 6px;
@@ -442,24 +442,62 @@ label {
     min-height: 0.25rem;
 }
 
-.responsables-list {
+.card-footer {
+    display: flex;
+    min-width: 0;
+    margin-top: 0.6rem;
+    gap: 0.6rem;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.card-indicators {
+    display: flex;
+    min-width: 0;
+    gap: 0.65rem;
+    align-items: center;
+    flex: 1 1 110px;
+    flex-wrap: wrap;
+    color: rgba(45, 55, 72, 0.72);
+    font-size: 0.72rem;
+    font-weight: 650;
+}
+
+.card-people {
+    display: flex;
+    min-width: 0;
+    gap: 0.4rem;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+}
+
+.card-people-group {
     display: flex;
     min-height: 28px;
-    margin-top: 0.5rem;
     padding-right: 0.1rem;
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
 }
 
+.card-responsables {
+    padding: 2px 3px 2px 5px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.12);
+}
+
 .responsable-avatar {
+    position: relative;
     display: inline-flex;
     width: 27px;
     height: 27px;
     margin-left: -5px;
     align-items: center;
     justify-content: center;
-    overflow: hidden;
+    overflow: visible;
     border: 2px solid rgba(255, 255, 255, 0.84);
     border-radius: 999px;
     color: #fff;
@@ -475,20 +513,34 @@ label {
     margin-left: 0;
 }
 
+.responsable-avatar-principal {
+    border-color: #f59e0b;
+    box-shadow:
+        0 0 0 2px rgba(245, 158, 11, 0.24),
+        0 1px 3px rgba(15, 23, 42, 0.18);
+}
+
+.responsable-avatar-principal::after {
+    position: absolute;
+    top: -7px;
+    right: -4px;
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: #7c2d12;
+    background: #fbbf24;
+    content: "★";
+    font-size: 8px;
+    line-height: 1;
+}
+
 .carte.compact .responsable-avatar {
     width: 24px;
     height: 24px;
     font-size: 0.56rem;
-}
-
-.card-indicators {
-    display: flex;
-    margin-top: 0.55rem;
-    gap: 0.65rem;
-    align-items: center;
-    color: rgba(45, 55, 72, 0.72);
-    font-size: 0.72rem;
-    font-weight: 650;
 }
 
 .tampon-termine,
@@ -1297,6 +1349,128 @@ label {
     color: var(--danger);
 }
 
+
+/* ========== ÉTIQUETTES ACTIVES ========== */
+
+.etiquettes-field-header {
+    display: flex;
+    min-width: 0;
+    margin-bottom: 0.55rem;
+    gap: 0.6rem;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.etiquettes-field-header .field-label {
+    margin-bottom: 0;
+}
+
+.etiquettes-picker {
+    width: auto;
+    flex: 0 0 auto;
+}
+
+.etiquettes-picker > summary.etiquettes-add-button {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-color);
+    background: var(--background-field);
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-overflow: clip;
+}
+
+.etiquettes-picker > summary.etiquettes-add-button::after {
+    display: none;
+}
+
+.etiquettes-picker[open] > summary.etiquettes-add-button {
+    color: #fff;
+    background: var(--focus);
+}
+
+.etiquettes-picker .multi-dropdown-menu {
+    position: absolute;
+    z-index: 1400;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    width: min(410px, calc(100vw - 2.5rem));
+    max-height: 360px;
+    margin-top: 0;
+    box-shadow: var(--shadow-medium);
+}
+
+.etiquettes-actives {
+    display: flex;
+    min-width: 0;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.etiquette-active {
+    display: inline-flex;
+    max-width: 100%;
+    min-height: 26px;
+    padding: 0.2rem 0.35rem 0.2rem 0.58rem;
+    gap: 0.3rem;
+    align-items: center;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 750;
+}
+
+.etiquette-active > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.etiquette-active button {
+    display: inline-flex;
+    width: 19px;
+    height: 19px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 999px;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.24);
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1;
+}
+
+.etiquette-active button:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+.etiquettes-empty {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
+.multi-all-selected {
+    padding: 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-align: center;
+}
+
+.multi-all-selected[hidden] {
+    display: none;
+}
+
 /* ========== SECTIONS DE DÉTAIL ========== */
 
 .detail-section {
@@ -1328,6 +1502,340 @@ label {
     margin-top: 0.12rem;
     color: var(--text-muted);
     font-size: 0.75rem;
+}
+
+
+/* ========== CHECKLIST ========== */
+
+.checklist-header {
+    margin-bottom: 0.55rem;
+}
+
+.checklist-progress-percent {
+    display: inline-flex;
+    min-width: 48px;
+    min-height: 30px;
+    padding: 0.28rem 0.5rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: var(--focus);
+    background: rgba(37, 99, 235, 0.1);
+    font-size: 0.76rem;
+    font-weight: 800;
+}
+
+.checklist-progress {
+    width: 100%;
+    height: 8px;
+    margin-bottom: 0.85rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.22);
+}
+
+.checklist-progress > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--focus);
+    transition: width 0.2s ease;
+}
+
+.checklist-add {
+    display: grid;
+    margin-bottom: 0.65rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+}
+
+.checklist-add-input {
+    width: 100%;
+    min-width: 0;
+    padding: 0.62rem 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    outline: 0;
+    color: var(--text-color);
+    background: var(--background-field);
+}
+
+.checklist-add-input:focus {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.checklist-add button {
+    padding: 0.55rem 0.72rem;
+    border: 1px solid var(--focus);
+    border-radius: 6px;
+    color: #fff;
+    background: var(--focus);
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.checklist-status {
+    min-height: 1.1rem;
+    margin-bottom: 0.35rem;
+}
+
+.checklist-items {
+    display: grid;
+    width: 100%;
+    gap: 0.55rem;
+}
+
+.checklist-item {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    padding: 0.62rem;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    gap: 0.55rem;
+    align-items: start;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--background-field);
+    transition:
+        border-color 0.15s ease,
+        opacity 0.15s ease,
+        transform 0.15s ease;
+}
+
+.checklist-item.done {
+    opacity: 0.72;
+}
+
+.checklist-item.done .checklist-item-text {
+    text-decoration: line-through;
+}
+
+.checklist-item.overdue {
+    border-color: rgba(209, 26, 75, 0.5);
+}
+
+.checklist-item-ghost {
+    opacity: 0.35;
+}
+
+.checklist-item-chosen {
+    transform: scale(1.01);
+}
+
+.checklist-drag-handle,
+.checklist-delete {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 5px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+}
+
+.checklist-drag-handle {
+    cursor: grab;
+    font-weight: 900;
+    letter-spacing: -0.15rem;
+}
+
+.checklist-drag-handle:active {
+    cursor: grabbing;
+}
+
+.checklist-drag-handle:hover,
+.checklist-delete:hover {
+    color: var(--text-color);
+    background: var(--background-hover);
+}
+
+.checklist-delete:hover {
+    color: var(--danger);
+}
+
+.checklist-check {
+    position: relative;
+    display: inline-flex;
+    width: 26px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+}
+
+.checklist-check input {
+    position: absolute;
+    opacity: 0;
+}
+
+.checklist-check span {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--background-row);
+    cursor: pointer;
+}
+
+.checklist-check input:checked + span {
+    border-color: var(--success);
+    color: #fff;
+    background: var(--success);
+}
+
+.checklist-check input:checked + span::after {
+    content: "✓";
+    font-size: 0.8rem;
+    font-weight: 900;
+}
+
+.checklist-item-content {
+    display: grid;
+    min-width: 0;
+    gap: 0.5rem;
+}
+
+.checklist-item-text {
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 0.42rem 0.5rem;
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    outline: 0;
+    color: var(--text-color);
+    background: transparent;
+    resize: none;
+    line-height: 1.4;
+}
+
+.checklist-item-text:hover:not(:disabled),
+.checklist-item-text:focus {
+    border-color: var(--border-color);
+    background: var(--background-row);
+}
+
+.checklist-item-meta {
+    display: flex;
+    min-width: 0;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.checklist-due {
+    display: inline-flex;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0.28rem 0.4rem;
+    gap: 0.3rem;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: var(--background-row);
+}
+
+.checklist-due.overdue {
+    border-color: rgba(209, 26, 75, 0.5);
+    color: #d11a4b;
+}
+
+.checklist-due input {
+    min-width: 118px;
+    border: 0;
+    outline: 0;
+    color: inherit;
+    background: transparent;
+    font-size: 0.74rem;
+}
+
+.checklist-assignees {
+    position: relative;
+    min-width: 0;
+}
+
+.checklist-assignees > summary,
+.checklist-assignees.readonly {
+    display: inline-flex;
+    min-height: 32px;
+    padding: 0.22rem 0.45rem;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    background: var(--background-row);
+    cursor: pointer;
+    list-style: none;
+}
+
+.checklist-assignees > summary::-webkit-details-marker {
+    display: none;
+}
+
+.checklist-assignees-menu {
+    position: absolute;
+    z-index: 1450;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    width: min(360px, calc(100vw - 3rem));
+    max-height: 300px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--background-row);
+    box-shadow: var(--shadow-medium);
+}
+
+.checklist-assignees-menu .multi-options {
+    max-height: 235px;
+}
+
+.checklist-assignee-avatars {
+    display: flex;
+    align-items: center;
+}
+
+.checklist-assignee-avatar,
+.checklist-assignee-more {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    margin-left: -5px;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--background-row);
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.54rem;
+    font-weight: 800;
+}
+
+.checklist-assignee-avatar:first-child {
+    margin-left: 0;
+}
+
+.checklist-assignee-more {
+    color: var(--text-muted);
+    background: var(--background-hover);
+    font-size: 0.58rem;
+}
+
+.checklist-assignee-placeholder {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+}
+
+.checklist-empty {
+    padding: 1rem;
 }
 
 /* ========== PIÈCES JOINTES ========== */
@@ -1944,6 +2452,44 @@ label {
         grid-column: auto;
     }
 
+    .etiquettes-picker .multi-dropdown-menu,
+    .checklist-assignees-menu {
+        position: fixed;
+        z-index: 1700;
+        inset: auto 0 0;
+        width: 100%;
+        max-height: 58vh;
+        border-radius: 14px 14px 0 0;
+    }
+
+    .checklist-item {
+        grid-template-columns: auto auto minmax(0, 1fr);
+    }
+
+    .checklist-delete {
+        grid-column: 3;
+        justify-self: end;
+    }
+
+    .checklist-add {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .checklist-add button {
+        width: 100%;
+    }
+
+    .checklist-item-meta {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .checklist-due,
+    .checklist-assignees > summary,
+    .checklist-assignees.readonly {
+        width: 100%;
+    }
+
     .color-picker-row {
         grid-template-columns: 44px minmax(0, 1fr);
     }
@@ -2004,6 +2550,9 @@ label {
 
     .popup-actions,
     .multi-dropdown-menu,
+    .checklist-add,
+    .checklist-drag-handle,
+    .checklist-delete,
     .attachment-viewer,
     .attachment-upload-button,
     .comment-composer,
@@ -2025,7 +2574,12 @@ label {
 .multi-option,
 .attachments-grid,
 .comments-list,
-.comment-card {
+.comment-card,
+.checklist-section,
+.checklist-items,
+.checklist-item,
+.checklist-item-content,
+.etiquettes-actives {
     min-width: 0;
     max-width: 100%;
 }
