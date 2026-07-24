@@ -1,4 +1,4 @@
-// ========== KANBAN2 — VERSION 5.2 ==========
+// ========== KANBAN2 — VERSION 5.2.1 ==========
 // Notes enrichies, responsables et étiquettes en RefList, avatars compacts, pièces jointes et commentaires Grist.
 // Compatible avec WidgetSDK 1.2.0.62.
 
@@ -67,12 +67,11 @@ window.addEventListener('load', async () => {
 
             WidgetSDK.newItem('showattachments', true, 'Pièces jointes', 'Afficher la section des pièces jointes dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showcomments', true, 'Commentaires', 'Afficher la section des commentaires dans la fiche.', '3 — Fiche descriptive'),
-            WidgetSDK.newItem('enablementions', true, 'Mentions @', 'Permettre de mentionner les membres dans les commentaires.', '3 — Fiche descriptive'),
             WidgetSDK.newItem(
-                'mentionnotificationtable',
-                'Notifications_Kanban',
-                'Table des notifications',
-                'Table utilisée pour préparer un e-mail par personne mentionnée. L’envoi réel est réalisé par une Automatisation Grist.',
+                'enablementions',
+                true,
+                'Mentions @ visuelles',
+                'Permettre de mentionner les membres dans les commentaires. Cette version ne déclenche aucun e-mail automatique.',
                 '3 — Fiche descriptive'
             ),
             WidgetSDK.newItem('showmetadata', true, 'Informations de suivi', 'Afficher les lignes « Créé le » et « Modifié le » en bas de la fiche.', '3 — Fiche descriptive'),
@@ -2454,7 +2453,7 @@ function construireSectionCommentaires(todo) {
                     Le nom de l’auteur est renseigné par Grist avec
                     <code>user.Name</code>.
                     ${mentionsEnabled
-                        ? 'Les e-mails sont préparés dans la table de notifications configurée.'
+                        ? 'Les mentions sont visuelles uniquement et n’envoient pas d’e-mail automatique.'
                         : ''}
                 </div>
 
@@ -2888,22 +2887,6 @@ async function ajouterCommentaire(rowId, button, event) {
             );
         }
 
-        let notificationResult = {
-            prepared: 0,
-            missingEmails: []
-        };
-
-        if (
-            W.opt.enablementions !== false &&
-            savedComment.mentions.length > 0
-        ) {
-            notificationResult =
-                await preparerNotificationsMentions(
-                    rowId,
-                    savedComment
-                );
-        }
-
         if (textarea) {
             textarea.value = '';
             ajusterTextarea(textarea);
@@ -2920,29 +2903,16 @@ async function ajouterCommentaire(rowId, button, event) {
 
         rafraichirCommentaires(rowId);
 
-        const messages = [
-            `Commentaire ajouté par ${savedComment.author}.`
-        ];
-
-        if (notificationResult.prepared > 0) {
-            messages.push(
-                `${notificationResult.prepared} notification(s) transmise(s) à l’automatisation.`
-            );
-        }
-
-        if (notificationResult.missingEmails.length > 0) {
-            messages.push(
-                `E-mail manquant pour : ${notificationResult.missingEmails.join(', ')}.`
-            );
-        }
+        const mentionCount = savedComment.mentions.length;
+        const message = mentionCount > 0
+            ? `Commentaire ajouté par ${savedComment.author}. ${mentionCount} mention(s) visuelle(s), sans envoi d’e-mail.`
+            : `Commentaire ajouté par ${savedComment.author}.`;
 
         afficherStatutSection(
             'comments',
             rowId,
-            notificationResult.missingEmails.length > 0
-                ? 'warning'
-                : 'saved',
-            messages.join(' ')
+            'saved',
+            message
         );
     } catch (error) {
         console.error(
@@ -2963,72 +2933,6 @@ async function ajouterCommentaire(rowId, button, event) {
     }
 }
 
-async function preparerNotificationsMentions(rowId, comment) {
-    const mentions = normaliserMentionsCommentaire(comment.mentions);
-    const missingEmails = mentions
-        .filter((mention) => !mention.email)
-        .map((mention) => mention.name);
-
-    const recipients = [
-        ...new Map(
-            mentions
-                .filter((mention) => mention.email)
-                .map((mention) => [mention.email, mention])
-        ).values()
-    ];
-
-    if (recipients.length === 0) {
-        return {
-            prepared: 0,
-            missingEmails
-        };
-    }
-
-    const tableId = valeurTexte(
-        W.opt.mentionnotificationtable ||
-        'Notifications_Kanban'
-    ).trim();
-
-    if (!tableId) {
-        throw new Error(
-            'Renseignez la table des notifications dans la configuration du widget.'
-        );
-    }
-
-    const todo = trouverRecord(rowId);
-    const taskName =
-        valeurTexte(todo?.DESCRIPTION).trim() ||
-        `Tâche #${Number(rowId)}`;
-
-    const notificationTable = grist.getTable(tableId);
-
-    const records = recipients.map((recipient) => ({
-        fields: {
-            Destinataire_email: recipient.email,
-            Destinataire_nom: recipient.name,
-            Tache_id: Number(rowId),
-            Tache: taskName,
-            Auteur: comment.author,
-            Commentaire: comment.text,
-            Commentaire_id: comment.id,
-            Cree_le: new Date().toISOString()
-        }
-    }));
-
-    try {
-        await notificationTable.create(records);
-    } catch (error) {
-        throw new Error(
-            `Le commentaire est enregistré, mais la table « ${tableId} » ` +
-            'est absente ou mal configurée. Consultez le guide des notifications.'
-        );
-    }
-
-    return {
-        prepared: records.length,
-        missingEmails
-    };
-}
 
 async function supprimerCommentaire(rowId, commentId, event) {
     event?.preventDefault();
