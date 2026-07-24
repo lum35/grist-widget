@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 6 ==========
-// Membres et responsables en RefList, étiquettes compactes, checklist avancée, ordre manuel, pièces jointes et commentaires.
+// ========== KANBAN2 — VERSION 7 ==========
+// Fiche entièrement repensée, actions rapides, checklists titrées, membres, responsables, fichiers et liens.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -26,6 +26,7 @@ let ATTACHMENT_READ_TOKEN_AT = 0;
 const PEOPLE_SAVE_QUEUES = new Map();
 const LABEL_SAVE_QUEUES = new Map();
 const CHECKLIST_SAVE_QUEUES = new Map();
+const LINK_SAVE_QUEUES = new Map();
 const COMMENT_SAVE_QUEUES = new Map();
 const NOTES_SAVE_QUEUES = new Map();
 const NOTES_SAVE_TIMERS = new Map();
@@ -106,8 +107,9 @@ window.addEventListener('load', async () => {
             {name: 'MEMBRES', title: 'Membres', description: 'Toutes les personnes qui participent à la carte', type: 'RefList', strictType: true, optional: true},
             {name: 'RESPONSABLE', title: 'Responsables', description: 'Responsables principaux de la carte', type: 'RefList', strictType: true, optional: true},
             {name: 'ETIQUETTES', title: 'Étiquettes', description: 'Étiquettes multiples référencées depuis une table dédiée', type: 'RefList', strictType: true, optional: true},
-            {name: 'CHECKLIST', title: 'Checklist', description: 'Checklist avancée stockée en JSON', type: 'Text', strictType: true, optional: true},
+            {name: 'CHECKLIST', title: 'Checklist', description: 'Checklists titrées stockées en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'PIECES_JOINTES', title: 'Pièces jointes', description: 'Fichiers et images associés à la tâche', type: 'Attachments', strictType: true, optional: true},
+            {name: 'LIENS', title: 'Liens', description: 'Liens avec texte d’affichage stockés en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'COMMENTAIRES', title: 'Commentaires', description: 'Commentaires du widget stockés en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'COULEUR', title: 'Couleur de carte', description: 'Code hexadécimal choisi depuis le widget', type: 'Text', strictType: true, optional: true},
             {name: 'CREE_PAR', title: 'Créé par', type: 'Any', optional: true},
@@ -667,9 +669,12 @@ function creerCarteTodo(todo) {
     const membres = obtenirMembres(todo);
     const responsables = obtenirResponsables(todo);
     const etiquettes = obtenirEtiquettes(todo);
-    const checklist = parserChecklist(todo.CHECKLIST);
-    const checklistDone = checklist.filter((item) => item.done).length;
+    const checklists = parserChecklists(todo.CHECKLIST);
+    const checklistItems = checklists.flatMap((checklist) => checklist.items);
+    const checklistDone = checklistItems.filter((item) => item.done).length;
+    const links = parserLiens(todo.LIENS);
     const attachmentCount = normaliserIdsListe(todo.PIECES_JOINTES).length;
+    const resourceCount = attachmentCount + links.length;
     const commentCount = parserCommentaires(todo.COMMENTAIRES).length;
 
     const description = todo.DESCRIPTION_DISPLAY
@@ -711,11 +716,11 @@ function creerCarteTodo(todo) {
     `;
 
     const indicatorsHtml = `
-        ${(showChecklistProgress && checklist.length)
-            ? `<span title="${checklistDone} élément(s) terminé(s) sur ${checklist.length}">☑ ${checklistDone}/${checklist.length}</span>`
+        ${(showChecklistProgress && checklistItems.length)
+            ? `<span title="${checklistDone} élément(s) terminé(s) sur ${checklistItems.length}">☑ ${checklistDone}/${checklistItems.length}</span>`
             : ''}
-        ${(showIndicators && attachmentCount)
-            ? `<span title="${attachmentCount} pièce(s) jointe(s)">📎 ${attachmentCount}</span>`
+        ${(showIndicators && resourceCount)
+            ? `<span title="${resourceCount} ressource(s)">📎 ${resourceCount}</span>`
             : ''}
         ${(showIndicators && commentCount)
             ? `<span title="${commentCount} commentaire(s)">💬 ${commentCount}</span>`
@@ -1004,7 +1009,9 @@ async function togglePopupTodo(todo) {
     const background = W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR;
     const color = W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR;
 
-    popup.style.borderLeftColor = background;
+    popup.style.setProperty('--task-status-color', background);
+    popup.style.setProperty('--task-status-text', color);
+    popup.style.borderLeftColor = 'transparent';
     popup.dataset.statut = valeurTexte(todo.STATUT);
     popup.dataset.isdone = columnOption?.isdone ? 'true' : 'false';
     popup.dataset.currentTodo = String(todo.id);
@@ -1015,133 +1022,748 @@ async function togglePopupTodo(todo) {
     const closeButton = popup.querySelector('.bouton-fermer');
 
     if (title) {
-        title.textContent = valeurTexte(todo.DESCRIPTION) || T('New task');
+        title.textContent = '';
     }
     if (header) {
-        header.style.backgroundColor = background;
-        header.style.color = color;
+        header.style.backgroundColor = '';
+        header.style.color = '';
     }
     if (closeButton) {
-        closeButton.style.color = color;
+        closeButton.style.color = '';
     }
     if (!content) {
         return;
     }
 
-    const fields = [];
-    const descriptionDisabled = W.col.DESCRIPTION.getIsFormula();
     const notesDisabled = W.map?.NOTES ? W.col.NOTES.getIsFormula() : false;
+    const descriptionDisabled = W.col.DESCRIPTION.getIsFormula();
 
-    // Nom et notes restent dans la même grille que les autres champs, mais apparaissent en premier.
-    fields.push(`
-        <div class="field field-wide">
-            <label class="field-label">Nom de la tâche</label>
-            <textarea
-                class="field-textarea auto-expand task-title-input"
-                onchange="mettreAJourChamp(${Number(todo.id)}, 'DESCRIPTION', this.value, event)"
-                oninput="ajusterTextarea(this)"
-                ${descriptionDisabled ? 'disabled' : ''}
-            >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
-        </div>
-    `);
+    const dynamicContent = construireContenuDynamiqueFiche(todo);
+    const metadata = W.opt.showmetadata !== false
+        ? construireInfoCreation(todo)
+        : '';
 
-    if (W.map?.NOTES) {
-        fields.push(construireEditeurNotes(todo, notesDisabled));
-    }
+    let form = `
+        <div class="task-detail-shell" data-row-id="${Number(todo.id)}">
+            <section class="task-title-zone">
+                <div class="task-title-meta">
+                    <span
+                        class="task-status-pill"
+                        style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}"
+                    >${echapperHtml(valeurTexte(todo.STATUT))}</span>
+                </div>
+                <textarea
+                    class="task-detail-title auto-expand"
+                    aria-label="Nom de la tâche"
+                    placeholder="Nom de la tâche"
+                    oninput="ajusterTextarea(this)"
+                    onchange="mettreAJourTitreFiche(${Number(todo.id)}, this, event)"
+                    ${descriptionDisabled ? 'disabled' : ''}
+                >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
+            </section>
 
-    if (W.map?.ETIQUETTES) {
-        fields.push(construireChampEtiquettes(todo));
-    }
+            ${construireBarreActionsFiche(todo)}
+            ${construirePanneauxActionsFiche(todo)}
 
-    if (W.map?.MEMBRES) {
-        fields.push(construireChampPersonnes(
-            todo.id,
-            obtenirIdsMembres(todo),
-            'MEMBRES',
-            'Membres',
-            'membre',
-            'membres',
-            W.col.MEMBRES.getIsFormula()
-        ));
-    }
+            ${dynamicContent
+                ? `<div id="task-dynamic-${Number(todo.id)}" class="task-dynamic-content">${dynamicContent}</div>`
+                : `<div id="task-dynamic-${Number(todo.id)}" class="task-dynamic-content" hidden></div>`
+            }
 
-    if (W.map?.RESPONSABLE) {
-        fields.push(construireChampPersonnes(
-            todo.id,
-            obtenirIdsResponsables(todo),
-            'RESPONSABLE',
-            'Responsables',
-            'responsable',
-            'responsables',
-            W.col.RESPONSABLE.getIsFormula()
-        ));
-    }
+            ${W.map?.NOTES
+                ? construireEditeurNotes(todo, notesDisabled)
+                : ''
+            }
 
-    if (W.map?.DEADLINE) {
-        fields.push(`
-            <div class="field">
-                <label class="field-label">Échéance</label>
-                <input
-                    type="date"
-                    class="field-input"
-                    value="${echapperAttribut(formatDateForInput(todo.DEADLINE))}"
-                    onchange="mettreAJourChamp(${Number(todo.id)}, 'DEADLINE', this.value || null, event)"
-                    ${W.col.DEADLINE.getIsFormula() ? 'disabled' : ''}
-                >
+            ${W.map?.COMMENTAIRES && W.opt.showcomments !== false
+                ? construireSectionCommentaires(todo)
+                : ''
+            }
+
+            ${metadata
+                ? `<div class="task-detail-metadata">${metadata}</div>`
+                : ''
+            }
+
+            <div class="popup-actions">
+                <button
+                    type="button"
+                    class="popup-action-button bouton-supprimer"
+                    onclick="supprimerTodo(${Number(todo.id)}, event)"
+                    title="${echapperAttribut(T('Remove the task'))}"
+                    aria-label="${echapperAttribut(T('Remove the task'))}"
+                >🗑️</button>
             </div>
-        `);
-    }
-
-    if (W.map?.COULEUR) {
-        fields.push(construireChampCouleur(todo));
-    }
-
-    let form = `<div class="form-grid">${fields.join('')}</div>`;
-
-    if (W.map?.CHECKLIST && W.opt.showchecklist !== false) {
-        form += construireSectionChecklist(todo);
-    }
-
-    if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
-        form += construireSectionPiecesJointes(todo);
-    }
-
-    if (W.map?.COMMENTAIRES && W.opt.showcomments !== false) {
-        form += construireSectionCommentaires(todo);
-    }
-
-    const creationInfo = W.opt.showmetadata !== false ? construireInfoCreation(todo) : '';
-    if (creationInfo) {
-        form += `<div class="info-creation">${creationInfo}</div>`;
-    }
-
-    form += `
-        <div class="popup-actions">
-            <button
-                type="button"
-                class="popup-action-button bouton-supprimer"
-                onclick="supprimerTodo(${Number(todo.id)}, event)"
-                title="${echapperAttribut(T('Remove the task'))}"
-                aria-label="${echapperAttribut(T('Remove the task'))}"
-            >🗑️</button>
         </div>
     `;
 
     content.innerHTML = form;
     content.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
-    content
-        .querySelectorAll('.etiquettes-dropdown')
-        .forEach(mettreAJourMessageOptionsEtiquettes);
     popup.classList.add('visible');
 
-    if (W.map?.CHECKLIST && W.opt.showchecklist !== false) {
-        initialiserChecklistSortable(content);
-    }
+    initialiserChecklistsSortables(content);
 
-    if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
+    if (
+        W.map?.PIECES_JOINTES &&
+        normaliserIdsListe(todo.PIECES_JOINTES).length > 0
+    ) {
         await rafraichirPiecesJointes(todo.id);
     }
 }
+
+function construireBarreActionsFiche(todo) {
+    const canChecklist = Boolean(W.map?.CHECKLIST && !W.col.CHECKLIST.getIsFormula());
+    const canPeople = Boolean(
+        (W.map?.MEMBRES && !W.col.MEMBRES.getIsFormula()) ||
+        (W.map?.RESPONSABLE && !W.col.RESPONSABLE.getIsFormula())
+    );
+    const canResources = Boolean(
+        (W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula()) ||
+        (W.map?.LIENS && !W.col.LIENS.getIsFormula())
+    );
+
+    return `
+        <nav class="task-quick-actions" aria-label="Actions rapides">
+            <button
+                type="button"
+                class="task-quick-button"
+                data-panel-trigger="add"
+                onclick="ouvrirPanneauFiche('add', event)"
+            ><span>＋</span><strong>Ajouter</strong></button>
+
+            <button
+                type="button"
+                class="task-quick-button"
+                data-panel-trigger="checklist"
+                onclick="ouvrirPanneauFiche('checklist', event)"
+                ${canChecklist ? '' : 'disabled'}
+            ><span>☑</span><strong>Checklist</strong></button>
+
+            <button
+                type="button"
+                class="task-quick-button"
+                data-panel-trigger="people"
+                onclick="ouvrirPanneauFiche('people', event)"
+                ${canPeople ? '' : 'disabled'}
+            ><span>👥</span><strong>Membres</strong></button>
+
+            <button
+                type="button"
+                class="task-quick-button"
+                data-panel-trigger="resources"
+                onclick="ouvrirPanneauFiche('resources', event)"
+                ${canResources ? '' : 'disabled'}
+            ><span>📎</span><strong>Pièce jointe</strong></button>
+        </nav>
+    `;
+}
+
+function construirePanneauxActionsFiche(todo) {
+    const panels = [
+        construireMenuAjouterFiche(todo),
+        W.map?.ETIQUETTES ? construirePanneauEtiquettesFiche(todo) : '',
+        W.map?.DEADLINE ? construirePanneauDateFiche(todo) : '',
+        W.map?.CHECKLIST ? construirePanneauNouvelleChecklist(todo) : '',
+        (W.map?.MEMBRES || W.map?.RESPONSABLE) ? construirePanneauPersonnesFiche(todo) : '',
+        (W.map?.PIECES_JOINTES || W.map?.LIENS) ? construirePanneauRessourcesFiche(todo) : '',
+        W.map?.COULEUR ? construirePanneauCouleurFiche(todo) : ''
+    ].filter(Boolean).join('');
+
+    return `<div class="task-action-panels">${panels}</div>`;
+}
+
+function construireMenuAjouterFiche(todo) {
+    const entries = [];
+
+    if (W.map?.ETIQUETTES) {
+        entries.push(['🏷️', 'Étiquettes', 'labels']);
+    }
+    if (W.map?.DEADLINE) {
+        entries.push(['📅', 'Dates', 'date']);
+    }
+    if (W.map?.CHECKLIST) {
+        entries.push(['☑', 'Checklist', 'checklist']);
+    }
+    if (W.map?.MEMBRES || W.map?.RESPONSABLE) {
+        entries.push(['👥', 'Membres', 'people']);
+    }
+    if (W.map?.PIECES_JOINTES || W.map?.LIENS) {
+        entries.push(['📎', 'Pièce jointe', 'resources']);
+    }
+    if (W.map?.COULEUR) {
+        entries.push(['🎨', 'Couleur de carte', 'color']);
+    }
+
+    return `
+        <section class="task-action-panel task-add-menu" data-panel="add" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Ajouter à la carte</strong><span>Choisissez un élément</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-add-grid">
+                ${entries.map(([icon, label, panel]) => `
+                    <button
+                        type="button"
+                        onclick="ouvrirPanneauFiche('${panel}', event, true)"
+                    ><span>${icon}</span><strong>${echapperHtml(label)}</strong></button>
+                `).join('') || '<div class="section-empty">Aucun champ supplémentaire n’est mappé.</div>'}
+            </div>
+        </section>
+    `;
+}
+
+function construirePanneauEtiquettesFiche(todo) {
+    const selected = new Set(obtenirIdsEtiquettes(todo));
+    const disabled = W.col.ETIQUETTES.getIsFormula();
+
+    return `
+        <section class="task-action-panel" data-panel="labels" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Étiquettes</strong><span>Sélectionnez les étiquettes actives</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-panel-search">
+                <input type="search" placeholder="Rechercher une étiquette…" oninput="filtrerPanneauFiche(this)">
+            </div>
+            <div class="task-panel-options" data-row-id="${Number(todo.id)}">
+                ${ETIQUETTES.map((item) => `
+                    <label class="task-check-option" data-search="${echapperAttribut(item.label.toLocaleLowerCase(W.cultureFull))}">
+                        <input
+                            type="checkbox"
+                            value="${item.id}"
+                            ${selected.has(item.id) ? 'checked' : ''}
+                            onchange="enregistrerEtiquettesDepuisPanneau(${Number(todo.id)}, this.closest('.task-action-panel'), event)"
+                            ${disabled ? 'disabled' : ''}
+                        >
+                        <span class="task-option-label-color" style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}">${echapperHtml(item.label)}</span>
+                    </label>
+                `).join('') || '<div class="section-empty">Aucune étiquette disponible.</div>'}
+            </div>
+            <div class="task-panel-status section-status" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construirePanneauDateFiche(todo) {
+    const disabled = W.col.DEADLINE.getIsFormula();
+    return `
+        <section class="task-action-panel" data-panel="date" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Date limite</strong><span>Ajoutez ou modifiez l’échéance de la carte</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-date-editor">
+                <input
+                    type="date"
+                    value="${echapperAttribut(formatDateForInput(todo.DEADLINE))}"
+                    onchange="mettreAJourProprieteFiche(${Number(todo.id)}, 'DEADLINE', this.value || null, 'date', event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <button
+                    type="button"
+                    onclick="mettreAJourProprieteFiche(${Number(todo.id)}, 'DEADLINE', null, 'date', event)"
+                    ${disabled ? 'disabled' : ''}
+                >Retirer la date</button>
+            </div>
+            <div class="task-panel-status section-status" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construirePanneauNouvelleChecklist(todo) {
+    const disabled = W.col.CHECKLIST.getIsFormula();
+    return `
+        <section class="task-action-panel" data-panel="checklist" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Nouvelle checklist</strong><span>Donnez-lui un titre avant de l’ajouter</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-create-checklist">
+                <input
+                    type="text"
+                    class="new-checklist-title"
+                    placeholder="Ex. Préparation de l’événement"
+                    onkeydown="gererCreationChecklistClavier(${Number(todo.id)}, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <button
+                    type="button"
+                    onclick="ajouterChecklistAvecTitre(${Number(todo.id)}, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >Ajouter la checklist</button>
+            </div>
+            <div class="task-panel-status section-status" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construirePanneauPersonnesFiche(todo) {
+    const parts = [];
+
+    if (W.map?.MEMBRES) {
+        parts.push(construireSelecteurPersonnesPanneau(
+            todo,
+            'MEMBRES',
+            'Membres de la carte',
+            obtenirIdsMembres(todo),
+            W.col.MEMBRES.getIsFormula()
+        ));
+    }
+    if (W.map?.RESPONSABLE) {
+        parts.push(construireSelecteurPersonnesPanneau(
+            todo,
+            'RESPONSABLE',
+            'Responsables de la carte',
+            obtenirIdsResponsables(todo),
+            W.col.RESPONSABLE.getIsFormula()
+        ));
+    }
+
+    return `
+        <section class="task-action-panel" data-panel="people" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Membres et responsables</strong><span>Définissez qui participe et qui pilote la carte</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-panel-search">
+                <input type="search" placeholder="Rechercher une personne…" oninput="filtrerPanneauFiche(this)">
+            </div>
+            <div class="task-people-editors">${parts.join('')}</div>
+            <div class="task-panel-status section-status" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construireSelecteurPersonnesPanneau(todo, mappingKey, title, selectedIds, disabled) {
+    const selected = new Set(selectedIds);
+    return `
+        <div class="task-people-editor" data-mapping-key="${echapperAttribut(mappingKey)}" data-row-id="${Number(todo.id)}">
+            <h4>${echapperHtml(title)}</h4>
+            <div class="task-panel-options">
+                ${RESPONSABLES.map((person) => `
+                    <label class="task-check-option task-person-option" data-search="${echapperAttribut(`${person.label} ${person.email || ''}`.toLocaleLowerCase(W.cultureFull))}">
+                        <input
+                            type="checkbox"
+                            value="${person.id}"
+                            ${selected.has(person.id) ? 'checked' : ''}
+                            onchange="enregistrerPersonnesDepuisPanneau(${Number(todo.id)}, '${echapperJs(mappingKey)}', this.closest('.task-people-editor'), event)"
+                            ${disabled ? 'disabled' : ''}
+                        >
+                        <span class="responsable-option-avatar" style="background:${echapperAttribut(person.avatarColor)}">${echapperHtml(person.initials)}</span>
+                        <span class="task-person-name">${echapperHtml(person.label)}</span>
+                    </label>
+                `).join('') || '<div class="section-empty">Aucun membre disponible.</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function construirePanneauRessourcesFiche(todo) {
+    const canFiles = Boolean(W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula());
+    const canLinks = Boolean(W.map?.LIENS && !W.col.LIENS.getIsFormula());
+
+    return `
+        <section class="task-action-panel" data-panel="resources" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Pièce jointe ou lien</strong><span>Ajoutez un fichier Grist ou un lien personnalisé</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+
+            <div class="resource-add-tabs">
+                ${canFiles ? `
+                    <label class="resource-file-drop">
+                        <span>📤</span>
+                        <strong>Ajouter un fichier</strong>
+                        <small>Image, PDF, document… 50 Mo maximum</small>
+                        <input
+                            type="file"
+                            multiple
+                            onchange="ajouterPiecesJointes(${Number(todo.id)}, this, event)"
+                        >
+                    </label>
+                ` : ''}
+
+                ${canLinks ? `
+                    <div class="resource-link-form">
+                        <label>
+                            <span>Texte d’affichage</span>
+                            <input type="text" class="resource-link-label" placeholder="Ex. Brief du projet">
+                        </label>
+                        <label>
+                            <span>Adresse du lien</span>
+                            <input type="url" class="resource-link-url" placeholder="https://…">
+                        </label>
+                        <button type="button" onclick="ajouterLienFiche(${Number(todo.id)}, this, event)">Ajouter le lien</button>
+                    </div>
+                ` : ''}
+            </div>
+            <div class="task-panel-status section-status" id="attachments-status-${Number(todo.id)}" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construirePanneauCouleurFiche(todo) {
+    const current = normaliserCouleur(todo.COULEUR);
+    const pickerValue = current || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
+    const disabled = W.col.COULEUR.getIsFormula();
+
+    return `
+        <section class="task-action-panel" data-panel="color" hidden>
+            <div class="task-panel-heading">
+                <div><strong>Couleur de la carte</strong><span>Choisissez une couleur personnalisée</span></div>
+                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+            </div>
+            <div class="task-color-editor color-field" data-row-id="${Number(todo.id)}">
+                <input
+                    type="color"
+                    class="color-picker"
+                    value="${echapperAttribut(pickerValue)}"
+                    oninput="previsualiserCouleur(${Number(todo.id)}, this.value, this)"
+                    onchange="mettreAJourCouleurFiche(${Number(todo.id)}, this.value, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <input
+                    type="text"
+                    class="field-input color-value"
+                    value="${echapperAttribut(current || '')}"
+                    placeholder="#FFFFD1"
+                    maxlength="7"
+                    onchange="mettreAJourCouleurFiche(${Number(todo.id)}, this.value, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <button
+                    type="button"
+                    onclick="mettreAJourCouleurFiche(${Number(todo.id)}, '', this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >Réinitialiser</button>
+            </div>
+            <div class="task-panel-status section-status color-status" aria-live="polite"></div>
+        </section>
+    `;
+}
+
+function construireContenuDynamiqueFiche(todo) {
+    const properties = [];
+    const etiquettes = obtenirEtiquettes(todo);
+    const membres = obtenirMembres(todo);
+    const responsables = obtenirResponsables(todo);
+    const customColor = normaliserCouleur(todo.COULEUR);
+    const checklists = parserChecklists(todo.CHECKLIST);
+    const attachmentIds = normaliserIdsListe(todo.PIECES_JOINTES);
+    const links = parserLiens(todo.LIENS);
+
+    if (etiquettes.length > 0) {
+        properties.push(construireResumeEtiquettesFiche(todo, etiquettes));
+    }
+    if (todo.DEADLINE) {
+        properties.push(construireResumeDateFiche(todo));
+    }
+    if (membres.length > 0 || responsables.length > 0) {
+        properties.push(construireResumePersonnesFiche(todo, membres, responsables));
+    }
+    if (customColor) {
+        properties.push(construireResumeCouleurFiche(todo, customColor));
+    }
+
+    const blocks = [];
+    if (properties.length > 0) {
+        blocks.push(`<div class="task-property-grid">${properties.join('')}</div>`);
+    }
+    if (checklists.length > 0 && W.opt.showchecklist !== false) {
+        blocks.push(construireSectionsChecklists(todo, checklists));
+    }
+    if ((attachmentIds.length > 0 || links.length > 0) && W.opt.showattachments !== false) {
+        blocks.push(construireSectionRessources(todo, attachmentIds, links));
+    }
+
+    return blocks.join('');
+}
+
+function construireResumeEtiquettesFiche(todo, etiquettes) {
+    return `
+        <section class="task-property-card task-label-property">
+            <div class="task-property-heading">
+                <span>Étiquettes</span>
+                <button type="button" onclick="ouvrirPanneauFiche('labels', event, true)" aria-label="Ajouter une étiquette">+</button>
+            </div>
+            <div class="task-property-content task-label-chips">
+                ${etiquettes.map((item) => `
+                    <span class="etiquette-active" style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}">
+                        <span>${echapperHtml(item.label)}</span>
+                        ${W.col.ETIQUETTES.getIsFormula() ? '' : `
+                            <button type="button" onclick="retirerEtiquetteFiche(${Number(todo.id)}, ${Number(item.id)}, event)" aria-label="Retirer ${echapperAttribut(item.label)}">×</button>
+                        `}
+                    </span>
+                `).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function construireResumeDateFiche(todo) {
+    return `
+        <section class="task-property-card task-date-property" onclick="ouvrirPanneauFiche('date', event, true)">
+            <div class="task-property-heading"><span>Date limite</span><button type="button" aria-label="Modifier la date">✎</button></div>
+            <div class="task-property-content"><strong>📅 ${echapperHtml(formatDate(todo.DEADLINE))}</strong></div>
+        </section>
+    `;
+}
+
+function construireResumePersonnesFiche(todo, membres, responsables) {
+    const renderGroup = (title, people, role) => people.length ? `
+        <div class="task-people-summary-group">
+            <span>${echapperHtml(title)}</span>
+            <div class="task-people-summary-avatars">
+                ${people.map((person) => construireAvatarCarte(person, role)).join('')}
+            </div>
+        </div>
+    ` : '';
+
+    return `
+        <section class="task-property-card task-people-property">
+            <div class="task-property-heading"><span>Membres</span><button type="button" onclick="ouvrirPanneauFiche('people', event, true)" aria-label="Modifier les membres">✎</button></div>
+            <div class="task-property-content task-people-summary">
+                ${renderGroup('Responsables', responsables, 'responsable')}
+                ${renderGroup('Membres', membres, 'member')}
+            </div>
+        </section>
+    `;
+}
+
+function construireResumeCouleurFiche(todo, color) {
+    return `
+        <section class="task-property-card task-color-property" onclick="ouvrirPanneauFiche('color', event, true)">
+            <div class="task-property-heading"><span>Couleur</span><button type="button" aria-label="Modifier la couleur">✎</button></div>
+            <div class="task-property-content task-color-summary">
+                <span style="background:${echapperAttribut(color)}"></span>
+                <strong>${echapperHtml(color)}</strong>
+            </div>
+        </section>
+    `;
+}
+
+function ouvrirPanneauFiche(panelName, event, forceOpen = false) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const popup = document.getElementById('popup-todo');
+    const target = popup?.querySelector(`.task-action-panel[data-panel="${panelName}"]`);
+    if (!popup || !target) {
+        return;
+    }
+
+    const isAlreadyOpen = !target.hidden;
+    popup.querySelectorAll('.task-action-panel').forEach((panel) => {
+        panel.hidden = true;
+    });
+    popup.querySelectorAll('.task-quick-button').forEach((button) => {
+        button.classList.remove('active');
+    });
+
+    if (!isAlreadyOpen || forceOpen) {
+        target.hidden = false;
+        popup.querySelector(`[data-panel-trigger="${panelName}"]`)?.classList.add('active');
+        window.setTimeout(() => {
+            target.querySelector('input:not([type="checkbox"]):not([type="file"]), textarea, button')?.focus();
+        }, 0);
+    }
+}
+
+function fermerPanneauxFiche(event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const popup = document.getElementById('popup-todo');
+    popup?.querySelectorAll('.task-action-panel').forEach((panel) => {
+        panel.hidden = true;
+    });
+    popup?.querySelectorAll('.task-quick-button').forEach((button) => {
+        button.classList.remove('active');
+    });
+}
+
+function filtrerPanneauFiche(input) {
+    const panel = input.closest('.task-action-panel');
+    const query = valeurTexte(input.value).trim().toLocaleLowerCase(W.cultureFull);
+    panel?.querySelectorAll('[data-search]').forEach((option) => {
+        option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
+    });
+}
+
+async function rafraichirFicheCourante(rowId, panelName = '') {
+    const popup = document.getElementById('popup-todo');
+    const content = popup?.querySelector('.popup-content');
+    const scrollTop = content?.scrollTop || 0;
+    const record = trouverRecord(rowId);
+    if (!record) {
+        return;
+    }
+
+    await togglePopupTodo(record);
+    const refreshedContent = popup?.querySelector('.popup-content');
+    if (refreshedContent) {
+        refreshedContent.scrollTop = scrollTop;
+    }
+    if (panelName) {
+        ouvrirPanneauFiche(panelName, null, true);
+    }
+}
+
+async function mettreAJourTitreFiche(rowId, input, event) {
+    const value = valeurTexte(input?.value).trim();
+    await mettreAJourChamp(rowId, 'DESCRIPTION', value, event);
+    const cardDescription = trouverCarteParId(rowId)?.querySelector('.description');
+    if (cardDescription) {
+        cardDescription.textContent = value || T('No description');
+    }
+}
+
+async function mettreAJourProprieteFiche(rowId, field, value, panelName, event) {
+    const panel = event?.target?.closest('.task-action-panel');
+    const status = panel?.querySelector('.task-panel-status');
+    try {
+        if (status) {
+            status.className = 'task-panel-status section-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+        await mettreAJourChamp(rowId, field, value, event);
+        await rafraichirFicheCourante(rowId, panelName);
+    } catch (error) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Impossible d’enregistrer.';
+        }
+    }
+}
+
+async function enregistrerEtiquettesDepuisPanneau(rowId, panel, event) {
+    event?.stopPropagation();
+    const status = panel?.querySelector('.task-panel-status');
+    const ids = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => Number(input.value))
+        .filter((id) => ETIQUETTES_BY_ID.has(id));
+
+    try {
+        if (status) {
+            status.className = 'task-panel-status section-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+        await ecrireReferenceMultiple(rowId, 'ETIQUETTES', ids);
+        mettreAJourEtiquettesLocales(rowId, ids);
+        await rafraichirFicheCourante(rowId, 'labels');
+    } catch (error) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Impossible d’enregistrer les étiquettes.';
+        }
+    }
+}
+
+async function retirerEtiquetteFiche(rowId, labelId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const record = trouverRecord(rowId);
+    const ids = obtenirIdsEtiquettes(record).filter((id) => id !== Number(labelId));
+    await ecrireReferenceMultiple(rowId, 'ETIQUETTES', ids);
+    mettreAJourEtiquettesLocales(rowId, ids);
+    await rafraichirFicheCourante(rowId);
+}
+
+async function enregistrerPersonnesDepuisPanneau(rowId, mappingKey, editor, event) {
+    event?.stopPropagation();
+    const panel = editor.closest('.task-action-panel');
+    const status = panel?.querySelector('.task-panel-status');
+    const ids = Array.from(editor.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => Number(input.value))
+        .filter((id) => RESPONSABLES_BY_ID.has(id));
+
+    try {
+        if (status) {
+            status.className = 'task-panel-status section-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+        await ecrireReferenceMultiple(rowId, mappingKey, ids);
+        mettreAJourPersonnesLocales(rowId, mappingKey, ids);
+        await rafraichirFicheCourante(rowId, 'people');
+    } catch (error) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Impossible d’enregistrer les personnes.';
+        }
+    }
+}
+
+function gererCreationChecklistClavier(rowId, input, event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        ajouterChecklistAvecTitre(rowId, input, event);
+    }
+}
+
+async function ajouterChecklistAvecTitre(rowId, trigger, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const panel = trigger.closest('.task-action-panel');
+    const input = panel?.querySelector('.new-checklist-title');
+    const status = panel?.querySelector('.task-panel-status');
+    const title = valeurTexte(input?.value).trim();
+
+    if (!title) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Saisissez un titre.';
+        }
+        input?.focus();
+        return;
+    }
+
+    await enregistrerChecklistsEnFile(
+        rowId,
+        (checklists) => [
+            ...checklists,
+            {
+                id: genererIdentifiant(),
+                title,
+                items: [],
+                createdAt: new Date().toISOString()
+            }
+        ]
+    );
+    await rafraichirFicheCourante(rowId);
+}
+
+async function mettreAJourCouleurFiche(rowId, value, source, event) {
+    const panel = source?.closest('.task-action-panel');
+    const status = panel?.querySelector('.task-panel-status');
+    const raw = valeurTexte(value).trim();
+    const color = normaliserCouleur(raw);
+
+    if (raw && !color) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Utilisez un code hexadécimal valide.';
+        }
+        return;
+    }
+
+    try {
+        if (status) {
+            status.className = 'task-panel-status section-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+        await mettreAJourChamp(rowId, 'COULEUR', color || null, event);
+        const card = trouverCarteParId(rowId);
+        if (card) {
+            card.style.backgroundColor = color || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
+        }
+        await rafraichirFicheCourante(rowId, 'color');
+    } catch (error) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Impossible d’enregistrer la couleur.';
+        }
+    }
+}
+
 
 function construireEditeurNotes(todo, disabled) {
     const rowId = Number(todo.id);
@@ -2619,11 +3241,10 @@ function setMultiStatus(dropdown, state, message) {
     status.textContent = message;
 }
 
-// ========== CHECKLIST AVANCÉE ==========
+// ========== CHECKLISTS TITRÉES ========== 
 
-function parserChecklist(rawValue) {
+function parserChecklists(rawValue) {
     const raw = valeurTexte(rawValue).trim();
-
     if (!raw) {
         return [];
     }
@@ -2634,73 +3255,126 @@ function parserChecklist(rawValue) {
             return [];
         }
 
+        // Migration automatique de l’ancien format : tableau direct d’éléments.
+        const looksLikeLegacyItems = parsed.length > 0 && parsed.every((item) => !Array.isArray(item?.items));
+        if (looksLikeLegacyItems) {
+            const legacyItems = parsed.map((item, index) => normaliserItemChecklist(item, index));
+            return legacyItems.length > 0
+                ? [{
+                    id: 'legacy-checklist',
+                    title: 'Checklist',
+                    items: legacyItems,
+                    createdAt: ''
+                }]
+                : [];
+        }
+
         return parsed
-            .map((item, index) => ({
-                id: valeurTexte(item?.id) || `legacy-${index}`,
-                text: valeurTexte(item?.text).trim(),
-                done: Boolean(item?.done),
-                memberIds: normaliserIdsListe(
-                    item?.memberIds || item?.members || []
-                ),
-                dueDate: normaliserDateChecklist(
-                    item?.dueDate
-                ),
-                createdAt: valeurTexte(item?.createdAt)
-            }))
-            .filter((item) => item.text || item.id);
+            .map((checklist, index) => normaliserChecklist(checklist, index))
+            .filter((checklist) => checklist.title || checklist.items.length > 0);
     } catch (error) {
-        console.warn(
-            'Checklist illisible, valeur ignorée :',
-            error
-        );
+        console.warn('Checklists illisibles, valeur ignorée :', error);
         return [];
     }
 }
 
-function normaliserDateChecklist(value) {
-    const raw = valeurTexte(value).trim();
-    return /^\d{4}-\d{2}-\d{2}$/.test(raw)
-        ? raw
-        : '';
+function normaliserChecklist(checklist, index = 0) {
+    const items = Array.isArray(checklist?.items)
+        ? checklist.items.map((item, itemIndex) => normaliserItemChecklist(item, itemIndex))
+        : [];
+
+    return {
+        id: valeurTexte(checklist?.id) || `checklist-${index}-${genererIdentifiant()}`,
+        title: valeurTexte(checklist?.title || checklist?.name).trim() || `Checklist ${index + 1}`,
+        items,
+        createdAt: valeurTexte(checklist?.createdAt)
+    };
 }
 
-function construireSectionChecklist(todo) {
-    const items = parserChecklist(todo.CHECKLIST);
+function normaliserItemChecklist(item, index = 0) {
+    return {
+        id: valeurTexte(item?.id) || `item-${index}-${genererIdentifiant()}`,
+        text: valeurTexte(item?.text).trim(),
+        done: Boolean(item?.done),
+        memberIds: [...new Set(normaliserIdsListe(item?.memberIds || item?.members || []))],
+        dueDate: normaliserDateChecklist(item?.dueDate),
+        createdAt: valeurTexte(item?.createdAt)
+    };
+}
+
+function normaliserDateChecklist(value) {
+    const raw = valeurTexte(value).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
+}
+
+function construireSectionsChecklists(todo, checklists = parserChecklists(todo.CHECKLIST)) {
+    if (!checklists.length) {
+        return '';
+    }
+
     const disabled = W.col.CHECKLIST.getIsFormula();
-    const doneCount = items.filter((item) => item.done).length;
-    const progress = items.length > 0
-        ? Math.round((doneCount / items.length) * 100)
+    return `
+        <div class="checklists-stack" data-row-id="${Number(todo.id)}">
+            ${checklists.map((checklist) => construireBlocChecklist(checklist, todo.id, disabled)).join('')}
+        </div>
+    `;
+}
+
+function construireBlocChecklist(checklist, rowId, disabled) {
+    const doneCount = checklist.items.filter((item) => item.done).length;
+    const progress = checklist.items.length > 0
+        ? Math.round((doneCount / checklist.items.length) * 100)
         : 0;
 
     return `
         <section
             class="detail-section checklist-section"
-            data-row-id="${Number(todo.id)}"
+            data-row-id="${Number(rowId)}"
+            data-checklist-id="${echapperAttribut(checklist.id)}"
             data-disabled="${disabled ? 'true' : 'false'}"
         >
-            <div class="detail-section-header checklist-header">
-                <div>
-                    <h3>☑ Checklist</h3>
-                    <p>
-                        <span class="checklist-progress-text">
-                            ${doneCount}/${items.length} terminé(s)
-                        </span>
-                    </p>
+            <div class="checklist-title-row">
+                <div class="checklist-title-main">
+                    <span class="checklist-title-icon">☑</span>
+                    <input
+                        type="text"
+                        class="checklist-title-input"
+                        value="${echapperAttribut(checklist.title)}"
+                        onchange="renommerChecklist(${Number(rowId)}, '${echapperJs(checklist.id)}', this.value, event)"
+                        ${disabled ? 'disabled' : ''}
+                    >
                 </div>
-                <span
-                    class="checklist-progress-percent"
-                    aria-label="${progress}% terminé"
-                >${progress}%</span>
+                <div class="checklist-title-actions">
+                    <span class="checklist-progress-percent">${progress}%</span>
+                    ${disabled ? '' : `
+                        <button
+                            type="button"
+                            class="checklist-delete-list"
+                            onclick="supprimerChecklist(${Number(rowId)}, '${echapperJs(checklist.id)}', event)"
+                            title="Supprimer cette checklist"
+                            aria-label="Supprimer cette checklist"
+                        >×</button>
+                    `}
+                </div>
+            </div>
+
+            <div class="checklist-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
+                <span style="width:${progress}%"></span>
+            </div>
+
+            <div class="checklist-subtitle">
+                <span>${doneCount}/${checklist.items.length} terminé(s)</span>
             </div>
 
             <div
-                class="checklist-progress"
-                role="progressbar"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow="${progress}"
+                class="checklist-items"
+                data-row-id="${Number(rowId)}"
+                data-checklist-id="${echapperAttribut(checklist.id)}"
             >
-                <span style="width:${progress}%"></span>
+                ${checklist.items.length
+                    ? checklist.items.map((item) => construireItemChecklist(item, checklist.id, rowId, disabled)).join('')
+                    : '<div class="section-empty checklist-empty">Cette checklist est vide.</div>'
+                }
             </div>
 
             ${disabled ? '' : `
@@ -2709,62 +3383,29 @@ function construireSectionChecklist(todo) {
                         type="text"
                         class="checklist-add-input"
                         placeholder="Ajouter un élément…"
-                        onkeydown="gererAjoutChecklistClavier(
-                            ${Number(todo.id)},
-                            this,
-                            event
-                        )"
+                        onkeydown="gererAjoutItemChecklistClavier(${Number(rowId)}, '${echapperJs(checklist.id)}', this, event)"
                     >
                     <button
                         type="button"
-                        onclick="ajouterElementChecklist(
-                            ${Number(todo.id)},
-                            this,
-                            event
-                        )"
+                        onclick="ajouterItemChecklist(${Number(rowId)}, '${echapperJs(checklist.id)}', this, event)"
                     >Ajouter</button>
                 </div>
             `}
 
             <div
-                id="checklist-status-${Number(todo.id)}"
+                id="checklist-status-${Number(rowId)}-${encoderIdentifiantDom(checklist.id)}"
                 class="section-status checklist-status"
                 aria-live="polite"
             ></div>
-
-            <div
-                class="checklist-items"
-                data-row-id="${Number(todo.id)}"
-            >
-                ${items.length
-                    ? items.map((item) =>
-                        construireItemChecklist(
-                            item,
-                            todo.id,
-                            disabled
-                        )
-                    ).join('')
-                    : '<div class="section-empty checklist-empty">Aucun élément dans la checklist</div>'
-                }
-            </div>
         </section>
     `;
 }
 
-function construireItemChecklist(
-    item,
-    rowId,
-    disabled
-) {
+function construireItemChecklist(item, checklistId, rowId, disabled) {
     const assignedPeople = item.memberIds
         .map((id) => RESPONSABLES_BY_ID.get(id))
         .filter(Boolean);
-
-    const overdue =
-        !item.done &&
-        item.dueDate &&
-        new Date(`${item.dueDate}T23:59:59`).getTime()
-            < Date.now();
+    const overdue = !item.done && item.dueDate && new Date(`${item.dueDate}T23:59:59`).getTime() < Date.now();
 
     return `
         <article
@@ -2772,25 +3413,14 @@ function construireItemChecklist(
             data-item-id="${echapperAttribut(item.id)}"
         >
             ${disabled ? '' : `
-                <button
-                    type="button"
-                    class="checklist-drag-handle"
-                    title="Déplacer"
-                    aria-label="Déplacer"
-                >⋮⋮</button>
+                <button type="button" class="checklist-drag-handle" title="Déplacer" aria-label="Déplacer">⋮⋮</button>
             `}
 
             <label class="checklist-check">
                 <input
                     type="checkbox"
                     ${item.done ? 'checked' : ''}
-                    onchange="mettreAJourElementChecklist(
-                        ${Number(rowId)},
-                        '${echapperJs(item.id)}',
-                        'done',
-                        this.checked,
-                        event
-                    )"
+                    onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'done', this.checked, this, event)"
                     ${disabled ? 'disabled' : ''}
                 >
                 <span aria-hidden="true"></span>
@@ -2801,42 +3431,22 @@ function construireItemChecklist(
                     class="checklist-item-text auto-expand"
                     rows="1"
                     oninput="ajusterTextarea(this)"
-                    onchange="mettreAJourElementChecklist(
-                        ${Number(rowId)},
-                        '${echapperJs(item.id)}',
-                        'text',
-                        this.value,
-                        event
-                    )"
+                    onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'text', this.value, this, event)"
                     ${disabled ? 'disabled' : ''}
                 >${echapperHtml(item.text)}</textarea>
 
                 <div class="checklist-item-meta">
-                    <label
-                        class="checklist-due${overdue ? ' overdue' : ''}"
-                        title="${overdue ? 'Échéance dépassée' : 'Date limite'}"
-                    >
+                    <label class="checklist-due${overdue ? ' overdue' : ''}" title="${overdue ? 'Échéance dépassée' : 'Date limite'}">
                         <span>📅</span>
                         <input
                             type="date"
                             value="${echapperAttribut(item.dueDate)}"
-                            onchange="mettreAJourElementChecklist(
-                                ${Number(rowId)},
-                                '${echapperJs(item.id)}',
-                                'dueDate',
-                                this.value,
-                                event
-                            )"
+                            onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'dueDate', this.value, this, event)"
                             ${disabled ? 'disabled' : ''}
                         >
                     </label>
 
-                    ${construireAssignationChecklist(
-                        item,
-                        rowId,
-                        assignedPeople,
-                        disabled
-                    )}
+                    ${construireAssignationItemChecklist(item, checklistId, rowId, assignedPeople, disabled)}
                 </div>
             </div>
 
@@ -2844,11 +3454,7 @@ function construireItemChecklist(
                 <button
                     type="button"
                     class="checklist-delete"
-                    onclick="supprimerElementChecklist(
-                        ${Number(rowId)},
-                        '${echapperJs(item.id)}',
-                        event
-                    )"
+                    onclick="supprimerItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', event)"
                     title="Supprimer l’élément"
                     aria-label="Supprimer l’élément"
                 >×</button>
@@ -2857,142 +3463,78 @@ function construireItemChecklist(
     `;
 }
 
-function construireAssignationChecklist(
-    item,
-    rowId,
-    assignedPeople,
-    disabled
-) {
+function construireAssignationItemChecklist(item, checklistId, rowId, assignedPeople, disabled) {
     const selected = new Set(item.memberIds);
-    const summary = assignedPeople.length
-        ? `
-            <span class="checklist-assignee-avatars">
-                ${assignedPeople
-                    .slice(0, 4)
-                    .map((person) => `
-                        <span
-                            class="checklist-assignee-avatar"
-                            style="background:${echapperAttribut(person.avatarColor)}"
-                            title="${echapperAttribut(person.label)}"
-                        >${echapperHtml(person.initials)}</span>
-                    `)
-                    .join('')}
-                ${assignedPeople.length > 4
-                    ? `<span class="checklist-assignee-more">+${assignedPeople.length - 4}</span>`
-                    : ''
-                }
-            </span>
-        `
-        : '<span class="checklist-assignee-placeholder">👤 Attribuer</span>';
+    const summary = construireResumeAssignationChecklist(assignedPeople);
 
     if (disabled) {
-        return `
-            <div class="checklist-assignees readonly">
-                ${summary}
-            </div>
-        `;
+        return `<div class="checklist-assignees readonly">${summary}</div>`;
     }
-
-    const options = RESPONSABLES.map((person) => `
-        <label
-            class="multi-option checklist-person-option"
-            data-search="${echapperAttribut(
-                person.label.toLocaleLowerCase(W.cultureFull)
-            )}"
-        >
-            <input
-                type="checkbox"
-                value="${person.id}"
-                ${selected.has(person.id) ? 'checked' : ''}
-                onchange="mettreAJourAssignationsChecklist(
-                    ${Number(rowId)},
-                    '${echapperJs(item.id)}',
-                    this.closest('.checklist-assignees'),
-                    event
-                )"
-            >
-            <span
-                class="responsable-option-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-            >${echapperHtml(person.initials)}</span>
-            <span class="responsable-option-name">
-                ${echapperHtml(person.label)}
-            </span>
-        </label>
-    `).join('');
 
     return `
         <details class="checklist-assignees">
             <summary>${summary}</summary>
             <div class="checklist-assignees-menu">
                 <div class="multi-toolbar">
-                    <input
-                        type="search"
-                        class="multi-search"
-                        placeholder="Rechercher…"
-                        oninput="filtrerOptionsChecklist(this)"
-                        onclick="event.stopPropagation()"
-                    >
+                    <input type="search" class="multi-search" placeholder="Rechercher…" oninput="filtrerOptionsChecklist(this)" onclick="event.stopPropagation()">
                 </div>
                 <div class="multi-options">
-                    ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
+                    ${RESPONSABLES.map((person) => `
+                        <label class="multi-option checklist-person-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
+                            <input
+                                type="checkbox"
+                                value="${person.id}"
+                                ${selected.has(person.id) ? 'checked' : ''}
+                                onchange="mettreAJourAssignationsItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', this.closest('.checklist-assignees'), event)"
+                            >
+                            <span class="responsable-option-avatar" style="background:${echapperAttribut(person.avatarColor)}">${echapperHtml(person.initials)}</span>
+                            <span class="responsable-option-name">${echapperHtml(person.label)}</span>
+                        </label>
+                    `).join('') || '<div class="multi-empty">Aucun membre disponible</div>'}
                 </div>
             </div>
         </details>
     `;
 }
 
+function construireResumeAssignationChecklist(people) {
+    return people.length
+        ? `
+            <span class="checklist-assignee-avatars">
+                ${people.slice(0, 4).map((person) => `
+                    <span class="checklist-assignee-avatar" style="background:${echapperAttribut(person.avatarColor)}" title="${echapperAttribut(person.label)}">${echapperHtml(person.initials)}</span>
+                `).join('')}
+                ${people.length > 4 ? `<span class="checklist-assignee-more">+${people.length - 4}</span>` : ''}
+            </span>
+        `
+        : '<span class="checklist-assignee-placeholder">👤 Attribuer</span>';
+}
+
 function filtrerOptionsChecklist(input) {
     const details = input.closest('.checklist-assignees');
-    const query = input.value
-        .trim()
-        .toLocaleLowerCase(W.cultureFull);
-
-    details
-        ?.querySelectorAll('.checklist-person-option')
-        .forEach((option) => {
-            option.hidden =
-                query !== '' &&
-                !valeurTexte(
-                    option.dataset.search
-                ).includes(query);
-        });
+    const query = input.value.trim().toLocaleLowerCase(W.cultureFull);
+    details?.querySelectorAll('.checklist-person-option').forEach((option) => {
+        option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
+    });
 }
 
-function gererAjoutChecklistClavier(
-    rowId,
-    input,
-    event
-) {
-    if (event.key !== 'Enter') {
-        return;
+function gererAjoutItemChecklistClavier(rowId, checklistId, input, event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        ajouterItemChecklist(rowId, checklistId, input, event);
     }
-
-    event.preventDefault();
-    ajouterElementChecklist(rowId, input, event);
 }
 
-async function ajouterElementChecklist(
-    rowId,
-    trigger,
-    event
-) {
+async function ajouterItemChecklist(rowId, checklistId, trigger, event) {
     event?.preventDefault();
     event?.stopPropagation();
-
     const section = trigger.closest('.checklist-section');
-    const input = section?.querySelector(
-        '.checklist-add-input'
-    );
+    const input = section?.querySelector('.checklist-add-input');
     const text = valeurTexte(input?.value).trim();
 
     if (!text) {
         input?.focus();
-        afficherStatutChecklist(
-            rowId,
-            'error',
-            'Saisissez un intitulé.'
-        );
+        afficherStatutChecklist(rowId, checklistId, 'error', 'Saisissez un intitulé.');
         return;
     }
 
@@ -3000,201 +3542,151 @@ async function ajouterElementChecklist(
         input.value = '';
     }
 
-    await enregistrerChecklistEnFile(
-        rowId,
-        (items) => [
-            ...items,
-            {
-                id: genererIdentifiant(),
-                text,
-                done: false,
-                memberIds: [],
-                dueDate: '',
-                createdAt: new Date().toISOString()
+    const updated = await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.map((checklist) => checklist.id === checklistId
+            ? {
+                ...checklist,
+                items: [
+                    ...checklist.items,
+                    {
+                        id: genererIdentifiant(),
+                        text,
+                        done: false,
+                        memberIds: [],
+                        dueDate: '',
+                        createdAt: new Date().toISOString()
+                    }
+                ]
             }
-        ],
-        true,
-        'Élément ajouté.'
-    );
-}
-
-async function mettreAJourElementChecklist(
-    rowId,
-    itemId,
-    field,
-    value,
-    event
-) {
-    event?.stopPropagation();
-
-    const normalizedValue =
-        field === 'done'
-            ? Boolean(value)
-            : field === 'dueDate'
-                ? normaliserDateChecklist(value)
-                : valeurTexte(value).trim();
-
-    await enregistrerChecklistEnFile(
-        rowId,
-        (items) =>
-            items.map((item) =>
-                item.id === itemId
-                    ? {
-                        ...item,
-                        [field]: normalizedValue
-                    }
-                    : item
-            ),
-        true,
-        'Checklist enregistrée.'
-    );
-}
-
-async function mettreAJourAssignationsChecklist(
-    rowId,
-    itemId,
-    details,
-    event
-) {
-    event?.stopPropagation();
-
-    const memberIds = Array.from(
-        details.querySelectorAll(
-            'input[type="checkbox"]:checked'
+            : checklist
         )
-    )
-        .map((input) => Number(input.value))
-        .filter((id) =>
-            Number.isInteger(id) &&
-            RESPONSABLES_BY_ID.has(id)
-        );
+    );
 
-    await enregistrerChecklistEnFile(
-        rowId,
-        (items) =>
-            items.map((item) =>
-                item.id === itemId
-                    ? {
-                        ...item,
-                        memberIds
-                    }
-                    : item
-            ),
-        true,
-        'Attribution enregistrée.'
+    rafraichirBlocChecklist(rowId, checklistId, updated);
+}
+
+async function renommerChecklist(rowId, checklistId, value, event) {
+    event?.stopPropagation();
+    const title = valeurTexte(value).trim() || 'Checklist';
+    await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.map((checklist) => checklist.id === checklistId
+            ? {...checklist, title}
+            : checklist
+        )
     );
 }
 
-async function supprimerElementChecklist(
-    rowId,
-    itemId,
-    event
-) {
-    event?.preventDefault();
+async function mettreAJourItemChecklist(rowId, checklistId, itemId, field, value, source, event) {
     event?.stopPropagation();
+    const normalizedValue = field === 'done'
+        ? Boolean(value)
+        : field === 'dueDate'
+            ? normaliserDateChecklist(value)
+            : valeurTexte(value).trim();
 
-    const record = trouverRecord(rowId);
-    const item = parserChecklist(record?.CHECKLIST)
-        .find((candidate) => candidate.id === itemId);
-
-    if (
-        item?.text &&
-        !window.confirm(
-            `Supprimer « ${item.text} » de la checklist ?`
+    const updated = await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.map((checklist) => checklist.id === checklistId
+            ? {
+                ...checklist,
+                items: checklist.items.map((item) => item.id === itemId
+                    ? {...item, [field]: normalizedValue}
+                    : item
+                )
+            }
+            : checklist
         )
-    ) {
+    );
+
+    if (field === 'text') {
+        afficherStatutChecklist(rowId, checklistId, 'saved', 'Élément enregistré.');
         return;
     }
 
-    await enregistrerChecklistEnFile(
-        rowId,
-        (items) =>
-            items.filter((candidate) =>
-                candidate.id !== itemId
-            ),
-        true,
-        'Élément supprimé.'
-    );
+    rafraichirBlocChecklist(rowId, checklistId, updated);
 }
 
-async function enregistrerChecklistEnFile(
-    rowId,
-    transform,
-    refresh = true,
-    successMessage = 'Checklist enregistrée.'
-) {
-    const resolvedRowId = Number(rowId);
-    const previous =
-        CHECKLIST_SAVE_QUEUES.get(resolvedRowId) ||
-        Promise.resolve();
+async function mettreAJourAssignationsItemChecklist(rowId, checklistId, itemId, details, event) {
+    event?.stopPropagation();
+    const memberIds = Array.from(details.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => Number(input.value))
+        .filter((id) => RESPONSABLES_BY_ID.has(id));
 
-    afficherStatutChecklist(
-        resolvedRowId,
-        'saving',
-        'Enregistrement…'
+    await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.map((checklist) => checklist.id === checklistId
+            ? {
+                ...checklist,
+                items: checklist.items.map((item) => item.id === itemId
+                    ? {...item, memberIds}
+                    : item
+                )
+            }
+            : checklist
+        )
     );
+
+    const people = memberIds.map((id) => RESPONSABLES_BY_ID.get(id)).filter(Boolean);
+    const summary = details.querySelector('summary');
+    if (summary) {
+        summary.innerHTML = construireResumeAssignationChecklist(people);
+    }
+    afficherStatutChecklist(rowId, checklistId, 'saved', 'Attribution enregistrée.');
+}
+
+async function supprimerItemChecklist(rowId, checklistId, itemId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const record = trouverRecord(rowId);
+    const checklist = parserChecklists(record?.CHECKLIST).find((item) => item.id === checklistId);
+    const item = checklist?.items.find((candidate) => candidate.id === itemId);
+
+    if (item?.text && !window.confirm(`Supprimer « ${item.text} » ?`)) {
+        return;
+    }
+
+    const updated = await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.map((candidate) => candidate.id === checklistId
+            ? {...candidate, items: candidate.items.filter((item) => item.id !== itemId)}
+            : candidate
+        )
+    );
+    rafraichirBlocChecklist(rowId, checklistId, updated);
+}
+
+async function supprimerChecklist(rowId, checklistId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const record = trouverRecord(rowId);
+    const checklist = parserChecklists(record?.CHECKLIST).find((item) => item.id === checklistId);
+
+    if (!window.confirm(`Supprimer la checklist « ${checklist?.title || 'Checklist'} » et tous ses éléments ?`)) {
+        return;
+    }
+
+    await enregistrerChecklistsEnFile(rowId, (checklists) =>
+        checklists.filter((candidate) => candidate.id !== checklistId)
+    );
+    await rafraichirFicheCourante(rowId);
+}
+
+async function enregistrerChecklistsEnFile(rowId, transform) {
+    const resolvedRowId = Number(rowId);
+    const previous = CHECKLIST_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
 
     const next = previous
         .catch(() => undefined)
         .then(async () => {
             const record = trouverRecord(resolvedRowId);
-            const current = parserChecklist(
-                record?.CHECKLIST
-            );
-            const updated = transform(current)
-                .map((item) => ({
-                    id: valeurTexte(item.id) || genererIdentifiant(),
-                    text: valeurTexte(item.text).trim(),
-                    done: Boolean(item.done),
-                    memberIds: [...new Set(
-                        normaliserIdsListe(item.memberIds)
-                    )],
-                    dueDate: normaliserDateChecklist(
-                        item.dueDate
-                    ),
-                    createdAt: valeurTexte(
-                        item.createdAt
-                    ) || new Date().toISOString()
-                }));
+            const current = parserChecklists(record?.CHECKLIST);
+            const updated = transform(current).map((checklist, index) => normaliserChecklist(checklist, index));
 
-            await mettreAJourChamp(
-                resolvedRowId,
-                'CHECKLIST',
-                JSON.stringify(updated)
-            );
-
-            return updated;
-        })
-        .then((updated) => {
-            if (refresh) {
-                rafraichirChecklist(
-                    resolvedRowId,
-                    updated
-                );
+            await mettreAJourChamp(resolvedRowId, 'CHECKLIST', JSON.stringify(updated));
+            if (record) {
+                record.CHECKLIST = JSON.stringify(updated);
             }
-            afficherStatutChecklist(
-                resolvedRowId,
-                'saved',
-                successMessage
-            );
             return updated;
-        })
-        .catch((error) => {
-            afficherStatutChecklist(
-                resolvedRowId,
-                'error',
-                'Impossible d’enregistrer la checklist.'
-            );
-            console.error(
-                'Erreur pendant l’enregistrement de la checklist :',
-                error
-            );
-            throw error;
         })
         .finally(() => {
-            if (
-                CHECKLIST_SAVE_QUEUES.get(resolvedRowId) === next
-            ) {
+            if (CHECKLIST_SAVE_QUEUES.get(resolvedRowId) === next) {
                 CHECKLIST_SAVE_QUEUES.delete(resolvedRowId);
             }
         });
@@ -3203,126 +3695,268 @@ async function enregistrerChecklistEnFile(
     return next;
 }
 
-function rafraichirChecklist(rowId, items = null) {
-    const section = document.querySelector(
-        `.checklist-section[data-row-id="${Number(rowId)}"]`
-    );
+function rafraichirBlocChecklist(rowId, checklistId, checklists = null) {
     const record = trouverRecord(rowId);
+    const all = checklists || parserChecklists(record?.CHECKLIST);
+    const checklist = all.find((item) => item.id === checklistId);
+    const current = document.querySelector(`.checklist-section[data-row-id="${Number(rowId)}"][data-checklist-id="${echapperSelecteurCss(checklistId)}"]`);
 
-    if (!section || !record) {
+    if (!current || !checklist) {
+        rafraichirFicheCourante(rowId);
         return;
     }
 
-    if (items) {
-        record.CHECKLIST = JSON.stringify(items);
-    }
-
-    const replacement = document.createElement('div');
-    replacement.innerHTML =
-        construireSectionChecklist(record);
-
-    const nextSection = replacement.firstElementChild;
-    section.replaceWith(nextSection);
-    initialiserChecklistSortable(nextSection.parentElement);
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = construireBlocChecklist(checklist, rowId, W.col.CHECKLIST.getIsFormula());
+    const replacement = wrapper.firstElementChild;
+    current.replaceWith(replacement);
+    replacement.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
+    initialiserChecklistsSortables(replacement.parentElement);
 }
 
-function afficherStatutChecklist(
-    rowId,
-    state,
-    message
-) {
-    const status = document.getElementById(
-        `checklist-status-${Number(rowId)}`
-    );
-
+function afficherStatutChecklist(rowId, checklistId, state, message) {
+    const status = document.getElementById(`checklist-status-${Number(rowId)}-${encoderIdentifiantDom(checklistId)}`);
     if (!status) {
         return;
     }
-
-    status.className =
-        `section-status checklist-status${state ? ` ${state}` : ''}`;
+    status.className = `section-status checklist-status${state ? ` ${state}` : ''}`;
     status.textContent = message;
 }
 
-function initialiserChecklistSortable(root = document) {
-    if (
-        typeof Sortable !== 'function' ||
-        W.opt.readonly
-    ) {
+function initialiserChecklistsSortables(root = document) {
+    if (typeof Sortable !== 'function' || W.opt.readonly) {
         return;
     }
 
-    root
-        .querySelectorAll(
-            '.checklist-section[data-disabled="false"] .checklist-items'
-        )
-        .forEach((list) => {
-            if (list.dataset.sortableReady === 'true') {
-                return;
+    root.querySelectorAll('.checklist-section[data-disabled="false"] .checklist-items').forEach((list) => {
+        if (list.dataset.sortableReady === 'true') {
+            return;
+        }
+        list.dataset.sortableReady = 'true';
+
+        new Sortable(list, {
+            animation: 140,
+            handle: '.checklist-drag-handle',
+            ghostClass: 'checklist-item-ghost',
+            chosenClass: 'checklist-item-chosen',
+            onEnd: async () => {
+                const rowId = Number(list.dataset.rowId);
+                const checklistId = list.dataset.checklistId;
+                const orderedIds = Array.from(list.querySelectorAll('.checklist-item')).map((item) => item.dataset.itemId);
+
+                await enregistrerChecklistsEnFile(rowId, (checklists) =>
+                    checklists.map((checklist) => {
+                        if (checklist.id !== checklistId) {
+                            return checklist;
+                        }
+                        const byId = new Map(checklist.items.map((item) => [item.id, item]));
+                        return {
+                            ...checklist,
+                            items: orderedIds.map((id) => byId.get(id)).filter(Boolean)
+                        };
+                    })
+                );
+                afficherStatutChecklist(rowId, checklistId, 'saved', 'Ordre enregistré.');
             }
-
-            list.dataset.sortableReady = 'true';
-
-            new Sortable(list, {
-                animation: 140,
-                handle: '.checklist-drag-handle',
-                ghostClass: 'checklist-item-ghost',
-                chosenClass: 'checklist-item-chosen',
-                onEnd: async () => {
-                    const rowId = Number(list.dataset.rowId);
-                    const orderedIds = Array.from(
-                        list.querySelectorAll('.checklist-item')
-                    ).map((item) => item.dataset.itemId);
-
-                    await enregistrerChecklistEnFile(
-                        rowId,
-                        (items) => {
-                            const byId = new Map(
-                                items.map((item) => [
-                                    item.id,
-                                    item
-                                ])
-                            );
-
-                            return orderedIds
-                                .map((id) => byId.get(id))
-                                .filter(Boolean);
-                        },
-                        true,
-                        'Ordre de la checklist enregistré.'
-                    );
-                }
-            });
         });
+    });
+}
+
+function encoderIdentifiantDom(value) {
+    return valeurTexte(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function echapperSelecteurCss(value) {
+    if (window.CSS?.escape) {
+        return window.CSS.escape(valeurTexte(value));
+    }
+    return valeurTexte(value).replace(/["\\]/g, '\\$&');
 }
 
 // ========== PIÈCES JOINTES ==========
 
-function construireSectionPiecesJointes(todo) {
-    const disabled = W.col.PIECES_JOINTES.getIsFormula();
+function construireSectionRessources(todo, attachmentIds = normaliserIdsListe(todo.PIECES_JOINTES), links = parserLiens(todo.LIENS)) {
     return `
-        <section class="detail-section attachments-section" data-row-id="${Number(todo.id)}">
-            <div class="detail-section-header">
+        <section class="detail-section resources-section" data-row-id="${Number(todo.id)}">
+            <div class="detail-section-header resource-section-header">
                 <div>
-                    <h3>📎 Pièces jointes</h3>
-                    <p>Images, PDF et autres fichiers</p>
+                    <h3>📎 Pièces jointes et liens</h3>
+                    <p>${attachmentIds.length + links.length} ressource(s)</p>
                 </div>
-                <label class="attachment-upload-button ${disabled ? 'disabled' : ''}">
-                    <span>Ajouter</span>
-                    <input
-                        type="file"
-                        multiple
-                        onchange="ajouterPiecesJointes(${Number(todo.id)}, this, event)"
-                        ${disabled ? 'disabled' : ''}
-                    >
-                </label>
+                <button type="button" class="section-edit-button" onclick="ouvrirPanneauFiche('resources', event, true)">Ajouter</button>
             </div>
-            <div id="attachments-status-${Number(todo.id)}" class="section-status" aria-live="polite"></div>
-            <div id="attachments-list-${Number(todo.id)}" class="attachments-grid">
-                <div class="section-loading">Chargement des pièces jointes…</div>
-            </div>
+
+            ${attachmentIds.length > 0 ? `
+                <div class="resource-subsection">
+                    <h4>Fichiers</h4>
+                    <div id="attachments-list-${Number(todo.id)}" class="attachments-grid">
+                        <div class="section-loading">Chargement des pièces jointes…</div>
+                    </div>
+                </div>
+            ` : ''}
+
+            ${links.length > 0 ? `
+                <div class="resource-subsection">
+                    <h4>Liens</h4>
+                    <div class="resource-links-list">
+                        ${links.map((link) => construireCarteLien(todo.id, link)).join('')}
+                    </div>
+                </div>
+            ` : ''}
         </section>
     `;
+}
+
+function parserLiens(rawValue) {
+    const raw = valeurTexte(rawValue).trim();
+    if (!raw) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+        return parsed
+            .map((link, index) => ({
+                id: valeurTexte(link?.id) || `link-${index}`,
+                label: valeurTexte(link?.label || link?.text).trim(),
+                url: normaliserUrlRessource(link?.url),
+                createdAt: valeurTexte(link?.createdAt)
+            }))
+            .filter((link) => link.label && link.url);
+    } catch (error) {
+        console.warn('Liens illisibles, valeur ignorée :', error);
+        return [];
+    }
+}
+
+function normaliserUrlRessource(rawUrl) {
+    const value = valeurTexte(rawUrl).trim();
+    if (!value) {
+        return '';
+    }
+
+    const candidate = /^(https?:)/i.test(value) ? value : `https://${value}`;
+    try {
+        const url = new URL(candidate);
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function construireCarteLien(rowId, link) {
+    let hostname = '';
+    try {
+        hostname = new URL(link.url).hostname;
+    } catch (_) {
+        hostname = link.url;
+    }
+
+    return `
+        <article class="resource-link-card">
+            <a href="${echapperAttribut(link.url)}" target="_blank" rel="noopener noreferrer" class="resource-link-main">
+                <span class="resource-link-icon">🔗</span>
+                <span class="resource-link-text">
+                    <strong>${echapperHtml(link.label)}</strong>
+                    <small>${echapperHtml(hostname)}</small>
+                </span>
+            </a>
+            ${(W.map?.LIENS && !W.col.LIENS.getIsFormula()) ? `
+                <button
+                    type="button"
+                    onclick="retirerLienFiche(${Number(rowId)}, '${echapperJs(link.id)}', event)"
+                    title="Retirer ce lien"
+                    aria-label="Retirer ce lien"
+                >×</button>
+            ` : ''}
+        </article>
+    `;
+}
+
+async function ajouterLienFiche(rowId, button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const panel = button.closest('.task-action-panel');
+    const labelInput = panel?.querySelector('.resource-link-label');
+    const urlInput = panel?.querySelector('.resource-link-url');
+    const status = panel?.querySelector('.task-panel-status');
+    const label = valeurTexte(labelInput?.value).trim();
+    const url = normaliserUrlRessource(urlInput?.value);
+
+    if (!label || !url) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Renseignez un texte d’affichage et une adresse valide.';
+        }
+        (!label ? labelInput : urlInput)?.focus();
+        return;
+    }
+
+    try {
+        if (status) {
+            status.className = 'task-panel-status section-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+        await enregistrerLiensEnFile(rowId, (links) => [
+            ...links,
+            {
+                id: genererIdentifiant(),
+                label,
+                url,
+                createdAt: new Date().toISOString()
+            }
+        ]);
+        await rafraichirFicheCourante(rowId, 'resources');
+    } catch (error) {
+        if (status) {
+            status.className = 'task-panel-status section-status error';
+            status.textContent = 'Impossible d’ajouter le lien.';
+        }
+    }
+}
+
+async function retirerLienFiche(rowId, linkId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    await enregistrerLiensEnFile(rowId, (links) => links.filter((link) => link.id !== linkId));
+    await rafraichirFicheCourante(rowId);
+}
+
+async function enregistrerLiensEnFile(rowId, transform) {
+    const resolvedRowId = Number(rowId);
+    const previous = LINK_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+
+    const next = previous
+        .catch(() => undefined)
+        .then(async () => {
+            const record = trouverRecord(resolvedRowId);
+            const current = parserLiens(record?.LIENS);
+            const updated = transform(current)
+                .map((link) => ({
+                    id: valeurTexte(link.id) || genererIdentifiant(),
+                    label: valeurTexte(link.label).trim(),
+                    url: normaliserUrlRessource(link.url),
+                    createdAt: valeurTexte(link.createdAt) || new Date().toISOString()
+                }))
+                .filter((link) => link.label && link.url);
+
+            await mettreAJourChamp(resolvedRowId, 'LIENS', JSON.stringify(updated));
+            if (record) {
+                record.LIENS = JSON.stringify(updated);
+            }
+            return updated;
+        })
+        .finally(() => {
+            if (LINK_SAVE_QUEUES.get(resolvedRowId) === next) {
+                LINK_SAVE_QUEUES.delete(resolvedRowId);
+            }
+        });
+
+    LINK_SAVE_QUEUES.set(resolvedRowId, next);
+    return next;
 }
 
 async function rafraichirPiecesJointes(rowId) {
@@ -3373,7 +4007,9 @@ function construireCartePieceJointe(rowId, attachmentId, tokenInfo) {
             </div>
             <div class="attachment-actions">
                 <button type="button" onclick="ouvrirPieceJointe(${Number(rowId)}, ${Number(attachmentId)}, event)" title="Visualiser">👁</button>
-                <button type="button" onclick="retirerPieceJointe(${Number(rowId)}, ${Number(attachmentId)}, event)" title="Retirer de la tâche">×</button>
+                ${(W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula())
+                    ? `<button type="button" onclick="retirerPieceJointe(${Number(rowId)}, ${Number(attachmentId)}, event)" title="Retirer de la tâche">×</button>`
+                    : ''}
             </div>
         </article>
     `;
@@ -3429,8 +4065,7 @@ async function ajouterPiecesJointes(rowId, input, event) {
 
         ATTACHMENT_META_LOADED = false;
         await chargerMetaPiecesJointes(true);
-        await rafraichirPiecesJointes(rowId);
-        afficherStatutSection('attachments', rowId, 'saved', 'Pièce(s) jointe(s) ajoutée(s).');
+        await rafraichirFicheCourante(rowId, 'resources');
     } catch (error) {
         console.error('Erreur pendant l’ajout des pièces jointes :', error);
         afficherStatutSection('attachments', rowId, 'error', error.message || 'Échec de l’envoi.');
@@ -3454,8 +4089,7 @@ async function retirerPieceJointe(rowId, attachmentId, event) {
         if (record) {
             record.PIECES_JOINTES = [...remaining];
         }
-        await rafraichirPiecesJointes(rowId);
-        afficherStatutSection('attachments', rowId, 'saved', 'Pièce jointe retirée de la tâche.');
+        await rafraichirFicheCourante(rowId);
     } catch (error) {
         console.error('Erreur pendant le retrait de la pièce jointe :', error);
         afficherStatutSection('attachments', rowId, 'error', 'Impossible de retirer la pièce jointe.');
@@ -4368,6 +5002,7 @@ async function creerNouvelleTache(status) {
         if (W.map?.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
         if (W.map?.COMMENTAIRES && !W.col.COMMENTAIRES.getIsFormula()) data.COMMENTAIRES = '[]';
         if (W.map?.CHECKLIST && !W.col.CHECKLIST.getIsFormula()) data.CHECKLIST = '[]';
+        if (W.map?.LIENS && !W.col.LIENS.getIsFormula()) data.LIENS = '[]';
         if (W.map?.ORDRE && !W.col.ORDRE.getIsFormula()) data.ORDRE = prochainOrdrePourStatut(status);
 
         const result = await W.createRecords({fields: data});
@@ -4471,9 +5106,16 @@ document.addEventListener('keydown', (event) => {
     const openedDropdown = document.querySelector('.multi-dropdown[open], .checklist-assignees[open]');
     if (openedDropdown) {
         openedDropdown.removeAttribute('open');
-    } else {
-        fermerPopup();
+        return;
     }
+
+    const openedPanel = document.querySelector('.task-action-panel:not([hidden])');
+    if (openedPanel) {
+        fermerPanneauxFiche(event);
+        return;
+    }
+
+    fermerPopup();
 });
 
 document.addEventListener('click', (event) => {
@@ -4485,6 +5127,18 @@ document.addEventListener('click', (event) => {
     const popup = document.getElementById('popup-todo');
     if (!popup?.classList.contains('visible')) {
         return;
+    }
+
+    const insideActionUi = Boolean(
+        event.target.closest('.task-action-panel, .task-quick-button')
+    );
+    if (!insideActionUi) {
+        popup.querySelectorAll('.task-action-panel').forEach((panel) => {
+            panel.hidden = true;
+        });
+        popup.querySelectorAll('.task-quick-button').forEach((button) => {
+            button.classList.remove('active');
+        });
     }
 
     const isInsidePopup = popup.contains(event.target);
@@ -4867,12 +5521,29 @@ window.mettreAJourEtiquettes = mettreAJourEtiquettes;
 window.viderEtiquettes = viderEtiquettes;
 window.retirerEtiquetteActive = retirerEtiquetteActive;
 
-window.gererAjoutChecklistClavier = gererAjoutChecklistClavier;
-window.ajouterElementChecklist = ajouterElementChecklist;
-window.mettreAJourElementChecklist = mettreAJourElementChecklist;
-window.mettreAJourAssignationsChecklist = mettreAJourAssignationsChecklist;
-window.supprimerElementChecklist = supprimerElementChecklist;
+window.ouvrirPanneauFiche = ouvrirPanneauFiche;
+window.fermerPanneauxFiche = fermerPanneauxFiche;
+window.filtrerPanneauFiche = filtrerPanneauFiche;
+window.mettreAJourTitreFiche = mettreAJourTitreFiche;
+window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
+window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;
+window.retirerEtiquetteFiche = retirerEtiquetteFiche;
+window.enregistrerPersonnesDepuisPanneau = enregistrerPersonnesDepuisPanneau;
+window.gererCreationChecklistClavier = gererCreationChecklistClavier;
+window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
+window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
+
+window.gererAjoutItemChecklistClavier = gererAjoutItemChecklistClavier;
+window.ajouterItemChecklist = ajouterItemChecklist;
+window.renommerChecklist = renommerChecklist;
+window.mettreAJourItemChecklist = mettreAJourItemChecklist;
+window.mettreAJourAssignationsItemChecklist = mettreAJourAssignationsItemChecklist;
+window.supprimerItemChecklist = supprimerItemChecklist;
+window.supprimerChecklist = supprimerChecklist;
 window.filtrerOptionsChecklist = filtrerOptionsChecklist;
+
+window.ajouterLienFiche = ajouterLienFiche;
+window.retirerLienFiche = retirerLienFiche;
 window.ajouterPiecesJointes = ajouterPiecesJointes;
 window.retirerPieceJointe = retirerPieceJointe;
 window.ouvrirPieceJointe = ouvrirPieceJointe;
