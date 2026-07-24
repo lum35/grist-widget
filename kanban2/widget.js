@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 4 ==========
-// Responsables multiples, étiquettes Trello, pièces jointes, commentaires Grist et sélecteur de couleur.
+// ========== KANBAN2 — VERSION 5 ==========
+// Notes enrichies, responsables et étiquettes en RefList, avatars compacts, pièces jointes et commentaires Grist.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -17,15 +17,17 @@ let RESPONSABLES = [];
 let RESPONSABLES_BY_ID = new Map();
 let RESPONSABLES_LOADED_FOR = null;
 let ETIQUETTES = [];
+let ETIQUETTES_BY_ID = new Map();
+let ETIQUETTES_LOADED_FOR = null;
 let ATTACHMENT_META = new Map();
 let ATTACHMENT_META_LOADED = false;
 let ATTACHMENT_READ_TOKEN = null;
 let ATTACHMENT_READ_TOKEN_AT = 0;
-let RESPONSABLE_WRITE_MODE = null;
-
 const RESPONSABLE_SAVE_QUEUES = new Map();
 const LABEL_SAVE_QUEUES = new Map();
 const COMMENT_SAVE_QUEUES = new Map();
+const NOTES_SAVE_QUEUES = new Map();
+const NOTES_SAVE_TIMERS = new Map();
 
 // ========== INITIALISATION ==========
 
@@ -38,24 +40,37 @@ window.addEventListener('load', async () => {
             WidgetSDK.newItem(
                 'columns',
                 null,
-                'Behavior',
-                'Configure the behavior of each column',
-                'Columns',
+                'Colonnes du Kanban',
+                'Réglez le comportement de chaque statut.',
+                '1 — Colonnes',
                 {
                     columnId: 'STATUT',
                     template: [
-                        WidgetSDK.newItem('addbutton', true, 'Can add card', 'Display a button to add a card.'),
-                        WidgetSDK.newItem('isdone', false, 'Is done', 'Cards in this column are considered completed.'),
-                        WidgetSDK.newItem('useconfetti', false, 'Use confetti', 'Display confetti when a card enters this column.'),
-                        WidgetSDK.newItem('hidecolumn', false, 'Hide', 'Hide this column.')
+                        WidgetSDK.newItem('addbutton', true, 'Autoriser l’ajout', 'Afficher un bouton pour créer une carte dans cette colonne.'),
+                        WidgetSDK.newItem('isdone', false, 'Colonne terminée', 'Considérer les cartes de cette colonne comme terminées.'),
+                        WidgetSDK.newItem('useconfetti', false, 'Confettis', 'Afficher des confettis lorsqu’une carte arrive dans cette colonne.'),
+                        WidgetSDK.newItem('hidecolumn', false, 'Masquer la colonne', 'Ne pas afficher cette colonne dans le Kanban.')
                     ]
                 }
             ),
-            WidgetSDK.newItem('rotation', true, 'Tilt', 'Randomly tilt cards.', 'Display'),
-            WidgetSDK.newItem('compact', false, 'Compact', 'Use a compact rendering.', 'Display'),
-            WidgetSDK.newItem('readonly', false, 'Read only', 'Disable all edits.', 'Display'),
-            WidgetSDK.newItem('hideedit', false, 'Hide editing form', 'Do not open the editing form when clicking a card.', 'Display'),
-            WidgetSDK.newItem('gristeditcard', false, 'Grist Record Card', 'Open the Grist record card on double click.', 'Display')
+
+            WidgetSDK.newItem('rotation', true, 'Inclinaison des cartes', 'Donner un léger effet post-it aux cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('compact', false, 'Mode compact', 'Réduire les espacements et la hauteur des cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showlabels', true, 'Afficher les étiquettes', 'Afficher les étiquettes colorées sur les cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showmembers', true, 'Afficher les responsables', 'Afficher les bulles d’initiales sur les cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showdeadline', true, 'Afficher l’échéance', 'Afficher la date limite sur les cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('showindicators', true, 'Afficher les indicateurs', 'Afficher le nombre de pièces jointes et de commentaires.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('defaultcardcolor', '#FFFFD1', 'Couleur par défaut', 'Couleur utilisée lorsqu’aucune couleur personnalisée n’est enregistrée.', '2 — Affichage des cartes'),
+
+            WidgetSDK.newItem('showattachments', true, 'Pièces jointes', 'Afficher la section des pièces jointes dans la fiche.', '3 — Fiche descriptive'),
+            WidgetSDK.newItem('showcomments', true, 'Commentaires', 'Afficher la section des commentaires dans la fiche.', '3 — Fiche descriptive'),
+            WidgetSDK.newItem('showmetadata', true, 'Informations de suivi', 'Afficher les lignes « Créé le » et « Modifié le » en bas de la fiche.', '3 — Fiche descriptive'),
+            WidgetSDK.newItem('autoclosemenus', true, 'Fermer les menus automatiquement', 'Fermer les sélecteurs multiples lorsqu’on clique ailleurs.', '3 — Fiche descriptive'),
+
+            WidgetSDK.newItem('readonly', false, 'Lecture seule', 'Désactiver toutes les modifications depuis le widget.', '4 — Comportement'),
+            WidgetSDK.newItem('hideedit', false, 'Masquer la fiche', 'Ne pas ouvrir la fiche descriptive lors d’un clic sur une carte.', '4 — Comportement'),
+            WidgetSDK.newItem('gristeditcard', false, 'Double-clic vers la fiche Grist', 'Ouvrir la fiche native de Grist lors d’un double-clic.', '4 — Comportement'),
+            WidgetSDK.newItem('confirmdelete', true, 'Confirmer les suppressions', 'Demander une confirmation avant de supprimer une tâche.', '4 — Comportement')
         ],
         '#config-view',
         '#main-view',
@@ -71,16 +86,17 @@ window.addEventListener('load', async () => {
             {name: 'STATUT', title: 'Statut', description: 'Colonne du Kanban', type: 'Choice', strictType: true},
             {name: 'DESCRIPTION', title: 'Nom de la tâche', description: 'Nom principal de la tâche', type: 'Any'},
             {name: 'DESCRIPTION_DISPLAY', title: 'Affichage de la tâche', description: 'Contenu personnalisé facultatif affiché sur la carte', type: 'Any', optional: true},
-            {name: 'NOTES', title: 'Notes', description: 'Notes détaillées de la tâche', type: 'Any', optional: true},
+            {name: 'NOTES', title: 'Notes', description: 'Notes enrichies enregistrées en HTML sécurisé', type: 'Text', strictType: true, optional: true},
             {name: 'DEADLINE', title: 'Échéance', description: 'Date limite ou ordre de priorité', type: 'Date', optional: true},
             {name: 'RESPONSABLE', title: 'Responsables', description: 'Personnes responsables de la tâche', type: 'RefList', strictType: true, optional: true},
-            {name: 'ETIQUETTES', title: 'Étiquettes', description: 'Étiquettes multiples de type Trello', type: 'ChoiceList', strictType: true, optional: true},
+            {name: 'ETIQUETTES', title: 'Étiquettes', description: 'Étiquettes multiples référencées depuis une table dédiée', type: 'RefList', strictType: true, optional: true},
             {name: 'PIECES_JOINTES', title: 'Pièces jointes', description: 'Fichiers et images associés à la tâche', type: 'Attachments', strictType: true, optional: true},
             {name: 'COMMENTAIRES', title: 'Commentaires', description: 'Commentaires du widget stockés en JSON', type: 'Text', strictType: true, optional: true},
             {name: 'COULEUR', title: 'Couleur de carte', description: 'Code hexadécimal choisi depuis le widget', type: 'Text', strictType: true, optional: true},
             {name: 'CREE_PAR', title: 'Créé par', type: 'Any', optional: true},
             {name: 'CREE_LE', title: 'Date de création', type: 'DateTime', optional: true},
-            {name: 'DERNIERE_MISE_A_JOUR', title: 'Dernière mise à jour', description: 'Champ technique non affiché', type: 'DateTime', optional: true}
+            {name: 'DERNIERE_MISE_A_JOUR', title: 'Dernière mise à jour', description: 'Date technique affichée dans le suivi', type: 'DateTime', optional: true},
+            {name: 'MODIFIE_PAR', title: 'Modifié par', description: 'Nom de la dernière personne ayant modifié la tâche', type: 'Text', strictType: true, optional: true}
         ]
     });
 
@@ -113,40 +129,39 @@ async function chargerResponsables(force = false) {
     }
 
     const colMeta = W.col.RESPONSABLE;
-    const [kind, tableId] = String(colMeta.type || '').split(':');
+    const cacheKey = `${colMeta.type}:${colMeta.visibleCol}`;
 
-    if (kind !== 'RefList' || !tableId || !colMeta.visibleCol) {
-        viderCacheResponsables();
-        return;
-    }
-
-    const cacheKey = `${tableId}:${colMeta.visibleCol}`;
     if (!force && RESPONSABLES_LOADED_FOR === cacheKey && RESPONSABLES.length > 0) {
         return;
     }
 
     try {
-        const [table, visibleMeta] = await Promise.all([
-            grist.docApi.fetchTable(tableId),
-            colMeta.getMeta(colMeta.visibleCol)
-        ]);
+        const reference = await chargerTableReference(colMeta);
+        const dataColumns = reference.dataColumns;
+        const initialsColumnId = trouverColonneParNoms(
+            dataColumns,
+            ['initiales', 'initiale', 'initials', 'abreviation', 'abréviation', 'sigle']
+        ) || colonneSuivante(dataColumns, reference.visibleColumnId);
 
-        const visibleColumnId = visibleMeta?.colId;
-        const ids = Array.isArray(table?.id) ? table.id : [];
-        const labels = visibleColumnId && Array.isArray(table?.[visibleColumnId])
-            ? table[visibleColumnId]
+        const initialsValues = initialsColumnId && Array.isArray(reference.table[initialsColumnId])
+            ? reference.table[initialsColumnId]
             : [];
 
-        const rows = ids
-            .map((rowId, index) => ({
-                id: Number(rowId),
-                label: valeurTexte(labels[index]).trim()
-            }))
+        RESPONSABLES = reference.ids
+            .map((rowId, index) => {
+                const label = valeurTexte(reference.labels[index]).trim();
+                const initials = nettoyerInitiales(initialsValues[index]) || calculerInitiales(label);
+                return {
+                    id: Number(rowId),
+                    label,
+                    initials,
+                    avatarColor: couleurAvatar(label || rowId)
+                };
+            })
             .filter((person) => Number.isInteger(person.id) && person.id > 0 && person.label && person.label !== '#KeyError')
             .sort((a, b) => a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'}));
 
-        RESPONSABLES = rows;
-        RESPONSABLES_BY_ID = new Map(rows.map((person) => [person.id, person]));
+        RESPONSABLES_BY_ID = new Map(RESPONSABLES.map((person) => [person.id, person]));
         RESPONSABLES_LOADED_FOR = cacheKey;
     } catch (error) {
         viderCacheResponsables();
@@ -160,17 +175,176 @@ function viderCacheResponsables() {
     RESPONSABLES_LOADED_FOR = null;
 }
 
-async function chargerEtiquettes() {
-    ETIQUETTES = [];
+async function chargerEtiquettes(force = false) {
     if (!W?.map?.ETIQUETTES || !W?.col?.ETIQUETTES) {
+        viderCacheEtiquettes();
+        return;
+    }
+
+    const colMeta = W.col.ETIQUETTES;
+    const cacheKey = `${colMeta.type}:${colMeta.visibleCol}`;
+
+    if (!force && ETIQUETTES_LOADED_FOR === cacheKey && ETIQUETTES.length > 0) {
         return;
     }
 
     try {
-        ETIQUETTES = [...new Set((await W.col.ETIQUETTES.getChoices() || []).map(valeurTexte).filter(Boolean))];
+        const reference = await chargerTableReference(colMeta);
+        const dataColumns = reference.dataColumns;
+        const colorColumnId = trouverColonneParNoms(
+            dataColumns,
+            ['couleur', 'color', 'hex', 'codecouleur', 'code_couleur']
+        ) || colonneSuivante(dataColumns, reference.visibleColumnId);
+
+        const colorValues = colorColumnId && Array.isArray(reference.table[colorColumnId])
+            ? reference.table[colorColumnId]
+            : [];
+
+        ETIQUETTES = reference.ids
+            .map((rowId, index) => {
+                const label = valeurTexte(reference.labels[index]).trim();
+                const explicitColor = normaliserCouleur(colorValues[index]);
+                const color = explicitColor || couleurEtiquetteParDefaut(label || rowId);
+                return {
+                    id: Number(rowId),
+                    label,
+                    color,
+                    textColor: couleurTexteContraste(color)
+                };
+            })
+            .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.label && item.label !== '#KeyError')
+            .sort((a, b) => a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'}));
+
+        ETIQUETTES_BY_ID = new Map(ETIQUETTES.map((item) => [item.id, item]));
+        ETIQUETTES_LOADED_FOR = cacheKey;
     } catch (error) {
-        console.error('Impossible de charger les étiquettes :', error);
+        viderCacheEtiquettes();
+        console.error('Impossible de charger la table des étiquettes :', error);
     }
+}
+
+function viderCacheEtiquettes() {
+    ETIQUETTES = [];
+    ETIQUETTES_BY_ID = new Map();
+    ETIQUETTES_LOADED_FOR = null;
+}
+
+async function chargerTableReference(colMeta) {
+    const [kind, tableId] = valeurTexte(colMeta?.type).split(':');
+    if (kind !== 'RefList' || !tableId || !colMeta?.visibleCol) {
+        throw new Error('La colonne doit être une Liste de références avec une colonne visible configurée.');
+    }
+
+    const [table, visibleMeta] = await Promise.all([
+        grist.docApi.fetchTable(tableId),
+        colMeta.getMeta(colMeta.visibleCol)
+    ]);
+
+    const visibleColumnId = visibleMeta?.colId;
+    if (!visibleColumnId || !Array.isArray(table?.id) || !Array.isArray(table?.[visibleColumnId])) {
+        throw new Error(`La colonne visible de la table ${tableId} est introuvable.`);
+    }
+
+    const dataColumns = Object.keys(table)
+        .filter((columnId) =>
+            Array.isArray(table[columnId]) &&
+            columnId !== 'id' &&
+            columnId !== 'manualSort' &&
+            !columnId.startsWith('gristHelper_')
+        );
+
+    return {
+        tableId,
+        table,
+        ids: table.id,
+        labels: table[visibleColumnId],
+        visibleColumnId,
+        dataColumns
+    };
+}
+
+function trouverColonneParNoms(columnIds, candidateNames) {
+    const wanted = new Set(candidateNames.map(normaliserIdentifiant));
+    return columnIds.find((columnId) => wanted.has(normaliserIdentifiant(columnId))) || null;
+}
+
+function colonneSuivante(columnIds, currentColumnId) {
+    const index = columnIds.indexOf(currentColumnId);
+    return index >= 0 ? (columnIds[index + 1] || null) : null;
+}
+
+function normaliserIdentifiant(value) {
+    return valeurTexte(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase();
+}
+
+function nettoyerInitiales(value) {
+    return valeurTexte(value)
+        .trim()
+        .replace(/\s+/g, '')
+        .slice(0, 4)
+        .toUpperCase();
+}
+
+function calculerInitiales(name) {
+    const words = valeurTexte(name)
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+    if (words.length === 0) return '?';
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return `${words[0][0] || ''}${words[words.length - 1][0] || ''}`.toUpperCase();
+}
+
+function couleurAvatar(seed) {
+    let hash = 0;
+    for (const char of valeurTexte(seed)) {
+        hash = ((hash << 5) - hash) + char.charCodeAt(0);
+        hash |= 0;
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue} 58% 42%)`;
+}
+
+function couleurEtiquetteParDefaut(seed) {
+    let hash = 0;
+    for (const char of valeurTexte(seed)) {
+        hash = ((hash << 5) - hash) + char.charCodeAt(0);
+        hash |= 0;
+    }
+    const hue = Math.abs(hash) % 360;
+    return hslVersHex(hue, 62, 72);
+}
+
+function hslVersHex(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+
+    if (h < 60) [r, g, b] = [c, x, 0];
+    else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x];
+    else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+
+    return `#${[r, g, b].map((v) => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+function couleurTexteContraste(hexColor) {
+    const color = normaliserCouleur(hexColor) || '#DDE3EA';
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luminance > 0.58 ? '#1F2937' : '#FFFFFF';
 }
 
 async function chargerMetaPiecesJointes(force = false) {
@@ -262,14 +436,13 @@ async function optionsChanged() {
 
 async function mappingChanged() {
     viderCacheResponsables();
-    RESPONSABLE_WRITE_MODE = null;
-    ETIQUETTES = [];
+    viderCacheEtiquettes();
     ATTACHMENT_META_LOADED = false;
     ATTACHMENT_READ_TOKEN = null;
 
     await Promise.all([
         chargerResponsables(true),
-        chargerEtiquettes()
+        chargerEtiquettes(true)
     ]);
 
     await afficherKanban(RECS);
@@ -323,8 +496,8 @@ function creerCarteTodo(todo) {
     appliquerCouleurCarte(card, todo.COULEUR);
 
     const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
-    const responsables = obtenirLibellesResponsables(todo);
-    const etiquettes = normaliserListeTexte(todo.ETIQUETTES);
+    const responsables = obtenirResponsables(todo);
+    const etiquettes = obtenirEtiquettes(todo);
     const attachmentCount = normaliserIdsListe(todo.PIECES_JOINTES).length;
     const commentCount = parserCommentaires(todo.COMMENTAIRES).length;
 
@@ -333,11 +506,18 @@ function creerCarteTodo(todo) {
         : echapperHtml(valeurTexte(todo.DESCRIPTION) || T('No description'));
 
     const labelsHtml = etiquettes
-        .map((label) => construireBadgeEtiquette(label))
+        .map((item) => construireBadgeEtiquette(item))
         .join('');
 
     const responsablesHtml = responsables
-        .map((responsable) => `<span class="responsable-badge">${echapperHtml(responsable)}</span>`)
+        .map((person) => `
+            <span
+                class="responsable-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+                title="${echapperAttribut(person.label)}"
+                aria-label="${echapperAttribut(person.label)}"
+            >${echapperHtml(person.initials)}</span>
+        `)
         .join('');
 
     const columnOption = getColumnOptionByStatus(todo.STATUT);
@@ -346,12 +526,17 @@ function creerCarteTodo(todo) {
         && deadlineTimestamp < Date.now()
         && deadlineTimestamp < DEADLINE_PRIORITE.getTime();
 
+    const showLabels = W.opt.showlabels !== false;
+    const showMembers = W.opt.showmembers !== false;
+    const showDeadline = W.opt.showdeadline !== false;
+    const showIndicators = W.opt.showindicators !== false;
+
     card.innerHTML = `
-        ${labelsHtml ? `<div class="etiquettes-list">${labelsHtml}</div>` : ''}
+        ${(showLabels && labelsHtml) ? `<div class="etiquettes-list">${labelsHtml}</div>` : ''}
         <div class="description">${description}</div>
-        ${deadline ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>` : ''}
-        ${responsables.length ? `<div class="responsables-list">${responsablesHtml}</div>` : ''}
-        ${(attachmentCount || commentCount)
+        ${(showDeadline && deadline) ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>` : ''}
+        ${(showMembers && responsables.length) ? `<div class="responsables-list" aria-label="Responsables">${responsablesHtml}</div>` : ''}
+        ${(showIndicators && (attachmentCount || commentCount))
             ? `<div class="card-indicators">
                 ${attachmentCount ? `<span title="${attachmentCount} pièce(s) jointe(s)">📎 ${attachmentCount}</span>` : ''}
                 ${commentCount ? `<span title="${commentCount} commentaire(s)">💬 ${commentCount}</span>` : ''}
@@ -381,17 +566,21 @@ function creerCarteTodo(todo) {
     return card;
 }
 
-function construireBadgeEtiquette(label) {
-    const background = W.col?.ETIQUETTES?.getColor(label) || 'rgba(0, 0, 0, 0.08)';
-    const color = W.col?.ETIQUETTES?.getTextColor(label) || '#273142';
-    return `<span class="etiquette-badge" style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}">${echapperHtml(label)}</span>`;
+function construireBadgeEtiquette(item) {
+    return `
+        <span
+            class="etiquette-badge"
+            style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
+            title="${echapperAttribut(item.label)}"
+        >${echapperHtml(item.label)}</span>
+    `;
 }
 
 function appliquerCouleurCarte(card, rawColor) {
-    const color = normaliserCouleur(rawColor);
-    if (color) {
-        card.style.backgroundColor = color;
-    }
+    const color = normaliserCouleur(rawColor)
+        || normaliserCouleur(W.opt?.defaultcardcolor)
+        || '#FFFFD1';
+    card.style.backgroundColor = color;
 }
 
 // ========== GLISSER-DÉPOSER ET TRI ==========
@@ -564,17 +753,7 @@ async function togglePopupTodo(todo) {
     `);
 
     if (W.map?.NOTES) {
-        fields.push(`
-            <div class="field field-wide">
-                <label class="field-label">Notes</label>
-                <textarea
-                    class="field-textarea auto-expand notes-input"
-                    onchange="mettreAJourChamp(${Number(todo.id)}, 'NOTES', this.value, event)"
-                    oninput="ajusterTextarea(this)"
-                    ${notesDisabled ? 'disabled' : ''}
-                >${echapperHtml(valeurTexte(todo.NOTES))}</textarea>
-            </div>
-        `);
+        fields.push(construireEditeurNotes(todo, notesDisabled));
     }
 
     if (W.map?.ETIQUETTES) {
@@ -611,15 +790,15 @@ async function togglePopupTodo(todo) {
 
     let form = `<div class="form-grid">${fields.join('')}</div>`;
 
-    if (W.map?.PIECES_JOINTES) {
+    if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
         form += construireSectionPiecesJointes(todo);
     }
 
-    if (W.map?.COMMENTAIRES) {
+    if (W.map?.COMMENTAIRES && W.opt.showcomments !== false) {
         form += construireSectionCommentaires(todo);
     }
 
-    const creationInfo = construireInfoCreation(todo);
+    const creationInfo = W.opt.showmetadata !== false ? construireInfoCreation(todo) : '';
     if (creationInfo) {
         form += `<div class="info-creation">${creationInfo}</div>`;
     }
@@ -640,14 +819,303 @@ async function togglePopupTodo(todo) {
     content.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
     popup.classList.add('visible');
 
-    if (W.map?.PIECES_JOINTES) {
+    if (W.map?.PIECES_JOINTES && W.opt.showattachments !== false) {
         await rafraichirPiecesJointes(todo.id);
     }
 }
 
+function construireEditeurNotes(todo, disabled) {
+    const rowId = Number(todo.id);
+    const value = normaliserHtmlNotes(todo.NOTES);
+    const disabledAttribute = disabled ? 'disabled' : '';
+    const contentEditable = disabled ? 'false' : 'true';
+
+    const buttons = [
+        ['bold', '<strong>B</strong>', 'Gras'],
+        ['italic', '<em>I</em>', 'Italique'],
+        ['underline', '<u>U</u>', 'Souligné'],
+        ['strikeThrough', '<s>S</s>', 'Barré'],
+        ['insertUnorderedList', '• Liste', 'Liste à puces'],
+        ['insertOrderedList', '1. Liste', 'Liste numérotée'],
+        ['formatBlock', '❝', 'Citation', 'blockquote'],
+        ['removeFormat', 'Tx', 'Effacer la mise en forme'],
+        ['undo', '↶', 'Annuler'],
+        ['redo', '↷', 'Rétablir']
+    ].map(([command, label, title, value]) => `
+        <button
+            type="button"
+            class="notes-tool"
+            onmousedown="event.preventDefault()"
+            onclick="appliquerCommandeNotes(this, '${command}', ${value ? `'${value}'` : 'null'}, event)"
+            title="${echapperAttribut(title)}"
+            aria-label="${echapperAttribut(title)}"
+            ${disabledAttribute}
+        >${label}</button>
+    `).join('');
+
+    return `
+        <div class="field field-wide notes-field" data-row-id="${rowId}">
+            <label class="field-label">Notes</label>
+            <div class="notes-toolbar" role="toolbar" aria-label="Mise en forme des notes">
+                ${buttons}
+                <button
+                    type="button"
+                    class="notes-tool notes-tool-link"
+                    onmousedown="event.preventDefault()"
+                    onclick="creerLienNotes(this, event)"
+                    title="Ajouter ou modifier un lien"
+                    aria-label="Ajouter ou modifier un lien"
+                    ${disabledAttribute}
+                >🔗 Lien</button>
+                <button
+                    type="button"
+                    class="notes-tool"
+                    onmousedown="event.preventDefault()"
+                    onclick="appliquerCommandeNotes(this, 'unlink', null, event)"
+                    title="Retirer le lien"
+                    aria-label="Retirer le lien"
+                    ${disabledAttribute}
+                >⛓̸</button>
+            </div>
+            <div
+                class="notes-editor"
+                contenteditable="${contentEditable}"
+                data-placeholder="Ajoutez des notes…"
+                oninput="planifierEnregistrementNotes(${rowId}, this)"
+                onblur="enregistrerNotesImmediatement(${rowId}, this)"
+                onpaste="nettoyerCollageNotes(this, event)"
+                role="textbox"
+                aria-multiline="true"
+            >${value}</div>
+            <div id="notes-status-${rowId}" class="section-status notes-status" aria-live="polite"></div>
+        </div>
+    `;
+}
+
+function normaliserHtmlNotes(rawValue) {
+    const raw = valeurTexte(rawValue).trim();
+    if (!raw) {
+        return '';
+    }
+
+    const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
+    const html = looksLikeHtml
+        ? raw
+        : echapperHtml(raw).replace(/\r?\n/g, '<br>');
+
+    return sanitiserHtmlNotes(html);
+}
+
+function sanitiserHtmlNotes(html) {
+    const template = document.createElement('template');
+    template.innerHTML = valeurTexte(html);
+
+    const allowedTags = new Set([
+        'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE',
+        'A', 'UL', 'OL', 'LI', 'P', 'DIV', 'BR',
+        'BLOCKQUOTE', 'H2', 'H3', 'SPAN'
+    ]);
+
+    const walk = (node) => {
+        Array.from(node.childNodes).forEach((child) => {
+            if (child.nodeType === Node.ELEMENT_NODE) {
+                const dangerousTags = new Set([
+                    'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED',
+                    'FORM', 'INPUT', 'BUTTON', 'SVG', 'MATH', 'META', 'LINK'
+                ]);
+
+                if (dangerousTags.has(child.tagName)) {
+                    child.remove();
+                    return;
+                }
+
+                if (!allowedTags.has(child.tagName)) {
+                    walk(child);
+                    child.replaceWith(...Array.from(child.childNodes));
+                    return;
+                }
+
+                Array.from(child.attributes).forEach((attribute) => {
+                    const allowedLinkAttribute = child.tagName === 'A'
+                        && ['href', 'target', 'rel'].includes(attribute.name.toLowerCase());
+                    if (!allowedLinkAttribute) {
+                        child.removeAttribute(attribute.name);
+                    }
+                });
+
+                if (child.tagName === 'A') {
+                    const href = normaliserUrlLien(child.getAttribute('href'));
+                    if (!href) {
+                        child.replaceWith(...Array.from(child.childNodes));
+                        return;
+                    }
+                    child.setAttribute('href', href);
+                    child.setAttribute('target', '_blank');
+                    child.setAttribute('rel', 'noopener noreferrer');
+                }
+
+                walk(child);
+            } else if (child.nodeType !== Node.TEXT_NODE) {
+                child.remove();
+            }
+        });
+    };
+
+    walk(template.content);
+    return template.innerHTML;
+}
+
+function appliquerCommandeNotes(button, command, value, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+    if (!editor || editor.contentEditable !== 'true') {
+        return;
+    }
+
+    editor.focus();
+    document.execCommand(command, false, value);
+    planifierEnregistrementNotes(Number(field.dataset.rowId), editor);
+}
+
+function creerLienNotes(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+    if (!editor || editor.contentEditable !== 'true') {
+        return;
+    }
+
+    editor.focus();
+    const rawUrl = window.prompt('Adresse du lien :', 'https://');
+    if (rawUrl === null) {
+        return;
+    }
+
+    const url = normaliserUrlLien(rawUrl);
+    if (!url) {
+        setNotesStatus(Number(field.dataset.rowId), 'error', 'Adresse de lien invalide.');
+        return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+        document.execCommand('insertHTML', false, `<a href="${echapperAttribut(url)}" target="_blank" rel="noopener noreferrer">${echapperHtml(url)}</a>`);
+    } else {
+        document.execCommand('createLink', false, url);
+        const anchor = selection.anchorNode?.parentElement?.closest?.('a');
+        if (anchor) {
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+        }
+    }
+
+    planifierEnregistrementNotes(Number(field.dataset.rowId), editor);
+}
+
+function normaliserUrlLien(rawUrl) {
+    const value = valeurTexte(rawUrl).trim();
+    if (!value) {
+        return '';
+    }
+
+    const candidate = /^(https?:|mailto:|tel:)/i.test(value)
+        ? value
+        : `https://${value}`;
+
+    try {
+        const url = new URL(candidate);
+        return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) ? url.href : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function nettoyerCollageNotes(editor, event) {
+    if (!event?.clipboardData) {
+        return;
+    }
+
+    event.preventDefault();
+    const rich = event.clipboardData.getData('text/html');
+    const plain = event.clipboardData.getData('text/plain');
+    const content = rich
+        ? sanitiserHtmlNotes(rich)
+        : echapperHtml(plain).replace(/\r?\n/g, '<br>');
+
+    document.execCommand('insertHTML', false, content);
+    const field = editor.closest('.notes-field');
+    planifierEnregistrementNotes(Number(field?.dataset?.rowId), editor);
+}
+
+function planifierEnregistrementNotes(rowId, editor) {
+    const resolvedRowId = Number(rowId);
+    window.clearTimeout(NOTES_SAVE_TIMERS.get(resolvedRowId));
+    setNotesStatus(resolvedRowId, 'saving', 'Modifications en attente…');
+
+    const timer = window.setTimeout(() => {
+        enregistrerNotes(resolvedRowId, editor);
+    }, 700);
+
+    NOTES_SAVE_TIMERS.set(resolvedRowId, timer);
+}
+
+function enregistrerNotesImmediatement(rowId, editor) {
+    const resolvedRowId = Number(rowId);
+    window.clearTimeout(NOTES_SAVE_TIMERS.get(resolvedRowId));
+    NOTES_SAVE_TIMERS.delete(resolvedRowId);
+    enregistrerNotes(resolvedRowId, editor);
+}
+
+async function enregistrerNotes(rowId, editor) {
+    if (!editor) {
+        return;
+    }
+
+    const resolvedRowId = Number(rowId);
+    const sanitized = sanitiserHtmlNotes(editor.innerHTML).trim();
+    const previous = NOTES_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+
+    setNotesStatus(resolvedRowId, 'saving', 'Enregistrement…');
+
+    const next = previous
+        .catch(() => undefined)
+        .then(() => mettreAJourChamp(resolvedRowId, 'NOTES', sanitized || null))
+        .then(() => {
+            editor.innerHTML = sanitized;
+            setNotesStatus(resolvedRowId, 'saved', 'Enregistré');
+            window.setTimeout(() => setNotesStatus(resolvedRowId, '', ''), 1200);
+        })
+        .catch((error) => {
+            setNotesStatus(resolvedRowId, 'error', 'Échec de l’enregistrement');
+            console.error('Erreur pendant l’enregistrement des notes :', error);
+        })
+        .finally(() => {
+            if (NOTES_SAVE_QUEUES.get(resolvedRowId) === next) {
+                NOTES_SAVE_QUEUES.delete(resolvedRowId);
+            }
+        });
+
+    NOTES_SAVE_QUEUES.set(resolvedRowId, next);
+    await next;
+}
+
+function setNotesStatus(rowId, state, message) {
+    const status = document.getElementById(`notes-status-${Number(rowId)}`);
+    if (!status) {
+        return;
+    }
+    status.className = `section-status notes-status${state ? ` ${state}` : ''}`;
+    status.textContent = message;
+}
+
 function construireChampCouleur(todo) {
     const current = normaliserCouleur(todo.COULEUR);
-    const pickerValue = current || '#ffffd1';
+    const pickerValue = current || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
     const disabled = W.col.COULEUR.getIsFormula();
 
     return `
@@ -751,14 +1219,14 @@ async function mettreAJourCouleur(rowId, value, source, event) {
             if (color) {
                 card.style.backgroundColor = color;
             } else {
-                card.style.removeProperty('background-color');
+                card.style.backgroundColor = normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
             }
         }
 
         if (field) {
             const picker = field.querySelector('.color-picker');
             const text = field.querySelector('.color-value');
-            if (picker) picker.value = color || '#ffffd1';
+            if (picker) picker.value = color || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
             if (text) text.value = color || '';
         }
 
@@ -794,21 +1262,21 @@ function reinitialiserCouleur(button, event) {
     mettreAJourCouleur(rowId, '', button, event);
 }
 
-// ========== RESPONSABLES ==========
+// ========== RESPONSABLES ET ÉTIQUETTES (REFLIST) ==========
 
 function insererChampResponsables(id, selectedIds, title, disabled) {
     const selection = new Set(normaliserIdsRefList(selectedIds));
     const options = RESPONSABLES.map((person) => `
-        <label class="multi-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
+        <label class="multi-option responsable-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
             <input
                 type="checkbox"
                 value="${person.id}"
-                data-label="${echapperAttribut(person.label)}"
                 ${selection.has(person.id) ? 'checked' : ''}
                 onchange="mettreAJourChampResponsables(${Number(id)}, this.closest('.multi-dropdown'), event)"
                 ${disabled ? 'disabled' : ''}
             >
-            <span>${echapperHtml(person.label)}</span>
+            <span class="responsable-option-avatar" style="background:${echapperAttribut(person.avatarColor)}">${echapperHtml(person.initials)}</span>
+            <span class="responsable-option-name">${echapperHtml(person.label)}</span>
         </label>
     `).join('');
 
@@ -843,20 +1311,14 @@ function insererChampResponsables(id, selectedIds, title, disabled) {
 
 function resumeResponsables(labels) {
     const values = normaliserListeTexte(labels);
-    if (values.length === 0) {
-        return 'Choisir…';
-    }
-    if (values.length === 1) {
-        return values[0];
-    }
+    if (values.length === 0) return 'Choisir…';
+    if (values.length === 1) return values[0];
     return `${values.length} responsables`;
 }
 
 function filtrerOptionsMultiples(input) {
     const dropdown = input.closest('.multi-dropdown');
-    if (!dropdown) {
-        return;
-    }
+    if (!dropdown) return;
 
     const query = input.value.trim().toLocaleLowerCase(W.cultureFull);
     dropdown.querySelectorAll('.multi-option').forEach((option) => {
@@ -869,9 +1331,7 @@ function viderResponsables(button, event) {
     event?.stopPropagation();
 
     const dropdown = button.closest('.multi-dropdown');
-    if (!dropdown) {
-        return;
-    }
+    if (!dropdown) return;
 
     dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
         checkbox.checked = false;
@@ -884,9 +1344,7 @@ async function mettreAJourChampResponsables(rowId, dropdown, event) {
     event?.stopPropagation();
 
     const resolvedRowId = Number(rowId || dropdown?.dataset?.rowId);
-    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) {
-        return;
-    }
+    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) return;
 
     const ids = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
         .map((input) => Number(input.value))
@@ -899,7 +1357,7 @@ async function mettreAJourChampResponsables(rowId, dropdown, event) {
     const previous = RESPONSABLE_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
     const next = previous
         .catch(() => undefined)
-        .then(() => enregistrerResponsablesDansGrist(resolvedRowId, ids))
+        .then(() => ecrireReferenceMultiple(resolvedRowId, 'RESPONSABLE', ids))
         .then(() => {
             mettreAJourResponsablesLocaux(resolvedRowId, ids);
             setMultiStatus(dropdown, 'saved', 'Enregistré');
@@ -919,170 +1377,58 @@ async function mettreAJourChampResponsables(rowId, dropdown, event) {
     await next;
 }
 
-async function enregistrerResponsablesDansGrist(rowId, ids) {
-    const actualColumnId = W.map?.RESPONSABLE;
-    if (!actualColumnId || Array.isArray(actualColumnId)) {
-        throw new Error('La colonne Responsable n’est pas correctement mappée.');
-    }
-
-    const normalizedIds = [...new Set(
-        normaliserTableau(ids)
-            .map(Number)
-            .filter((id) => Number.isInteger(id) && id > 0)
-    )];
-
-    const [, referencedTableId] = valeurTexte(W.col.RESPONSABLE.type).split(':');
-    const candidates = [
-        {
-            mode: 'list',
-            value: ['L', ...normalizedIds]
-        },
-        {
-            mode: 'normal',
-            value: [...normalizedIds]
-        },
-        {
-            mode: 'reference-list',
-            value: ['r', referencedTableId, [...normalizedIds]]
-        }
-    ];
-
-    const orderedCandidates = RESPONSABLE_WRITE_MODE
-        ? [
-            ...candidates.filter((candidate) => candidate.mode === RESPONSABLE_WRITE_MODE),
-            ...candidates.filter((candidate) => candidate.mode !== RESPONSABLE_WRITE_MODE)
-        ]
-        : candidates;
-
-    const table = grist.getTable();
-    const attempts = [];
-
-    for (const candidate of orderedCandidates) {
-        try {
-            await table.update({
-                id: Number(rowId),
-                fields: {
-                    [actualColumnId]: candidate.value
-                }
-            }, {
-                parseStrings: false
-            });
-
-            const writtenValue = await lireValeurBruteCellule(rowId, actualColumnId);
-            const writtenIds = extraireIdsReferenceMultiple(writtenValue);
-
-            if (memeListeIds(normalizedIds, writtenIds)) {
-                RESPONSABLE_WRITE_MODE = candidate.mode;
-                await mettreAJourDateTechnique(rowId);
-                return;
-            }
-
-            attempts.push({
-                mode: candidate.mode,
-                sent: candidate.value,
-                received: writtenValue
-            });
-        } catch (error) {
-            attempts.push({
-                mode: candidate.mode,
-                sent: candidate.value,
-                error: error?.message || String(error)
-            });
-        }
-    }
-
-    console.error('Formats testés pour la RefList :', attempts);
-    throw new Error(
-        'Grist n’a accepté aucun format d’écriture pour la liste de références. ' +
-        'Vérifiez que la colonne mappée est bien une Liste de références vers la table Membres.'
-    );
-}
-
-async function lireValeurBruteCellule(rowId, columnId) {
-    const tableId = await grist.getTable().getTableId();
-    const rawTable = await grist.docApi.fetchTable(tableId);
-    const rowIndex = normaliserTableau(rawTable?.id).findIndex((id) => Number(id) === Number(rowId));
-
-    if (rowIndex < 0) {
-        throw new Error(`Ligne ${rowId} introuvable dans la table ${tableId}.`);
-    }
-
-    return rawTable?.[columnId]?.[rowIndex];
-}
-
-function extraireIdsReferenceMultiple(value) {
-    if (value === null || value === undefined || value === '') {
-        return [];
-    }
-
-    if (!Array.isArray(value)) {
-        return [];
-    }
-
-    if (value[0] === 'E') {
-        return [];
-    }
-
-    if (value[0] === 'L') {
-        return normaliserIdsListe(value.slice(1));
-    }
-
-    if (value[0] === 'r') {
-        return normaliserIdsListe(value[2]);
-    }
-
-    return normaliserIdsListe(value);
-}
-
-function memeListeIds(expected, actual) {
-    const left = [...new Set(expected.map(Number))].sort((a, b) => a - b);
-    const right = [...new Set(actual.map(Number))].sort((a, b) => a - b);
-
-    return left.length === right.length && left.every((id, index) => id === right[index]);
-}
-
 function mettreAJourResponsablesLocaux(rowId, ids) {
     const record = trouverRecord(rowId);
-    if (!record) {
-        return;
-    }
+    if (!record) return;
 
     record.RESPONSABLE_id = [...ids];
-    record.RESPONSABLE = ids.map((id) => RESPONSABLES_BY_ID.get(id)?.label).filter(Boolean);
+    record.RESPONSABLE = ids
+        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
+        .filter(Boolean);
 }
 
-// ========== ÉTIQUETTES ==========
-
 function construireChampEtiquettes(todo) {
-    const selected = new Set(normaliserListeTexte(todo.ETIQUETTES));
-    const options = ETIQUETTES.map((label) => {
-        const background = W.col.ETIQUETTES.getColor(label) || '#dfe3e8';
-        const color = W.col.ETIQUETTES.getTextColor(label) || '#273142';
-        return `
-            <label class="multi-option etiquette-option" data-search="${echapperAttribut(label.toLocaleLowerCase(W.cultureFull))}">
-                <input
-                    type="checkbox"
-                    value="${echapperAttribut(label)}"
-                    ${selected.has(label) ? 'checked' : ''}
-                    onchange="mettreAJourEtiquettes(${Number(todo.id)}, this.closest('.multi-dropdown'), event)"
-                    ${W.col.ETIQUETTES.getIsFormula() ? 'disabled' : ''}
-                >
-                <span class="etiquette-preview" style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}">${echapperHtml(label)}</span>
-            </label>
-        `;
-    }).join('');
+    const selection = new Set(obtenirIdsEtiquettes(todo));
+    const disabled = W.col.ETIQUETTES.getIsFormula();
+
+    const options = ETIQUETTES.map((item) => `
+        <label class="multi-option etiquette-option" data-search="${echapperAttribut(item.label.toLocaleLowerCase(W.cultureFull))}">
+            <input
+                type="checkbox"
+                value="${item.id}"
+                ${selection.has(item.id) ? 'checked' : ''}
+                onchange="mettreAJourEtiquettes(${Number(todo.id)}, this.closest('.multi-dropdown'), event)"
+                ${disabled ? 'disabled' : ''}
+            >
+            <span
+                class="etiquette-preview"
+                style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
+            >${echapperHtml(item.label)}</span>
+        </label>
+    `).join('');
+
+    const selectedLabels = [...selection]
+        .map((id) => ETIQUETTES_BY_ID.get(id)?.label)
+        .filter(Boolean);
 
     return `
         <div class="field field-etiquettes">
             <label class="field-label">Étiquettes</label>
             <details class="multi-dropdown etiquettes-dropdown" data-row-id="${Number(todo.id)}">
-                <summary>${echapperHtml(resumeEtiquettes([...selected]))}</summary>
+                <summary>${echapperHtml(resumeEtiquettes(selectedLabels))}</summary>
                 <div class="multi-dropdown-menu">
                     <div class="multi-toolbar">
-                        <input type="search" class="multi-search" placeholder="Rechercher…" oninput="filtrerOptionsMultiples(this)" onclick="event.stopPropagation()">
-                        <button type="button" class="multi-clear" onclick="viderEtiquettes(this, event)">Effacer</button>
+                        <input
+                            type="search"
+                            class="multi-search"
+                            placeholder="Rechercher…"
+                            oninput="filtrerOptionsMultiples(this)"
+                            onclick="event.stopPropagation()"
+                            ${disabled ? 'disabled' : ''}
+                        >
+                        <button type="button" class="multi-clear" onclick="viderEtiquettes(this, event)" ${disabled ? 'disabled' : ''}>Effacer</button>
                     </div>
-                    <div class="multi-options">${options || '<div class="multi-empty">Ajoutez des choix dans la colonne Étiquettes de Grist</div>'}</div>
+                    <div class="multi-options">${options || '<div class="multi-empty">Ajoutez des lignes dans la table référencée par Étiquettes</div>'}</div>
                     <div class="multi-status" aria-live="polite"></div>
                 </div>
             </details>
@@ -1092,12 +1438,8 @@ function construireChampEtiquettes(todo) {
 
 function resumeEtiquettes(labels) {
     const values = normaliserListeTexte(labels);
-    if (values.length === 0) {
-        return 'Choisir…';
-    }
-    if (values.length === 1) {
-        return values[0];
-    }
+    if (values.length === 0) return 'Choisir…';
+    if (values.length === 1) return values[0];
     return `${values.length} étiquettes`;
 }
 
@@ -1106,51 +1448,35 @@ function viderEtiquettes(button, event) {
     event?.stopPropagation();
 
     const dropdown = button.closest('.multi-dropdown');
-    dropdown?.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
+    if (!dropdown) return;
+
+    dropdown.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
         checkbox.checked = false;
     });
 
-    if (dropdown) {
-        mettreAJourEtiquettes(Number(dropdown.dataset.rowId), dropdown, event);
-    }
+    mettreAJourEtiquettes(Number(dropdown.dataset.rowId), dropdown, event);
 }
 
 async function mettreAJourEtiquettes(rowId, dropdown, event) {
     event?.stopPropagation();
 
     const resolvedRowId = Number(rowId || dropdown?.dataset?.rowId);
-    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) {
-        return;
-    }
+    if (!Number.isInteger(resolvedRowId) || resolvedRowId <= 0 || !dropdown) return;
 
-    const labels = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
-        .map((input) => valeurTexte(input.value))
-        .filter((label) => ETIQUETTES.includes(label));
+    const ids = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => Number(input.value))
+        .filter((id) => Number.isInteger(id) && id > 0 && ETIQUETTES_BY_ID.has(id));
 
+    const labels = ids.map((id) => ETIQUETTES_BY_ID.get(id).label);
     dropdown.querySelector('summary').textContent = resumeEtiquettes(labels);
     setMultiStatus(dropdown, 'saving', 'Enregistrement…');
 
     const previous = LABEL_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
     const next = previous
         .catch(() => undefined)
-        .then(async () => {
-            const actualColumnId = W.map?.ETIQUETTES;
-            if (!actualColumnId || Array.isArray(actualColumnId)) {
-                throw new Error('La colonne Étiquettes n’est pas correctement mappée.');
-            }
-
-            // ChoiceList est un objet liste typé dans l’API de widget Grist.
-            await grist.getTable().update({
-                id: resolvedRowId,
-                fields: {[actualColumnId]: ['L', ...labels]}
-            });
-            await mettreAJourDateTechnique(resolvedRowId);
-        })
+        .then(() => ecrireReferenceMultiple(resolvedRowId, 'ETIQUETTES', ids))
         .then(() => {
-            const record = trouverRecord(resolvedRowId);
-            if (record) {
-                record.ETIQUETTES = [...labels];
-            }
+            mettreAJourEtiquettesLocales(resolvedRowId, ids);
             setMultiStatus(dropdown, 'saved', 'Enregistré');
             window.setTimeout(() => setMultiStatus(dropdown, '', ''), 1200);
         })
@@ -1168,11 +1494,84 @@ async function mettreAJourEtiquettes(rowId, dropdown, event) {
     await next;
 }
 
+function mettreAJourEtiquettesLocales(rowId, ids) {
+    const record = trouverRecord(rowId);
+    if (!record) return;
+
+    record.ETIQUETTES_id = [...ids];
+    record.ETIQUETTES = ids
+        .map((id) => ETIQUETTES_BY_ID.get(id)?.label)
+        .filter(Boolean);
+}
+
+async function ecrireReferenceMultiple(rowId, mappingKey, ids) {
+    const actualColumnId = W.map?.[mappingKey];
+    if (!actualColumnId || Array.isArray(actualColumnId)) {
+        throw new Error(`La colonne ${mappingKey} n’est pas correctement mappée.`);
+    }
+
+    const normalizedIds = [...new Set(
+        normaliserTableau(ids)
+            .map(Number)
+            .filter((id) => Number.isInteger(id) && id > 0)
+    )];
+
+    const tableId = await grist.getTable().getTableId();
+    const rawValue = normalizedIds.length > 0 ? ['L', ...normalizedIds] : null;
+
+    /*
+     * Écriture au format natif Grist :
+     * RefList = ["L", rowId1, rowId2, ...].
+     * applyUserActions contourne les conversions de chaînes et les remappages du SDK.
+     */
+    await grist.docApi.applyUserActions([
+        ['UpdateRecord', tableId, Number(rowId), {
+            [actualColumnId]: rawValue
+        }]
+    ]);
+
+    const writtenValue = await lireValeurBruteCellule(rowId, actualColumnId);
+    const writtenIds = extraireIdsReferenceMultiple(writtenValue);
+
+    if (!memeListeIds(normalizedIds, writtenIds)) {
+        throw new Error(
+            `Vérification d’écriture échouée pour ${mappingKey}. ` +
+            `Valeur envoyée : ${JSON.stringify(rawValue)} ; valeur relue : ${JSON.stringify(writtenValue)}`
+        );
+    }
+
+    await mettreAJourDateTechnique(rowId);
+}
+
+async function lireValeurBruteCellule(rowId, columnId) {
+    const tableId = await grist.getTable().getTableId();
+    const rawTable = await grist.docApi.fetchTable(tableId);
+    const rowIndex = normaliserTableau(rawTable?.id).findIndex((id) => Number(id) === Number(rowId));
+
+    if (rowIndex < 0) {
+        throw new Error(`Ligne ${rowId} introuvable dans la table ${tableId}.`);
+    }
+
+    return rawTable?.[columnId]?.[rowIndex];
+}
+
+function extraireIdsReferenceMultiple(value) {
+    if (value === null || value === undefined || value === '') return [];
+    if (!Array.isArray(value) || value[0] === 'E') return [];
+    if (value[0] === 'L') return normaliserIdsListe(value.slice(1));
+    if (value[0] === 'r') return normaliserIdsListe(value[2]);
+    return normaliserIdsListe(value);
+}
+
+function memeListeIds(expected, actual) {
+    const left = [...new Set(expected.map(Number))].sort((a, b) => a - b);
+    const right = [...new Set(actual.map(Number))].sort((a, b) => a - b);
+    return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 function setMultiStatus(dropdown, state, message) {
     const status = dropdown?.querySelector('.multi-status');
-    if (!status) {
-        return;
-    }
+    if (!status) return;
 
     status.className = `multi-status${state ? ` ${state}` : ''}`;
     status.textContent = message;
@@ -1675,11 +2074,10 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
             const updated = transform(current);
             const serialized = JSON.stringify(updated);
 
+            const tracking = construireChampsSuivi();
             await W.updateRecords(W.formatRecord(resolvedRowId, {
                 COMMENTAIRES: serialized,
-                ...(W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()
-                    ? {DERNIERE_MISE_A_JOUR: new Date().toISOString()}
-                    : {})
+                ...tracking
             }));
 
             // Une formule d’initialisation sur la colonne Commentaires remplace
@@ -1747,10 +2145,10 @@ async function mettreAJourChamp(todoId, field, value, event) {
             }
         }
 
-        const data = {[field]: value};
-        if (W.map?.DERNIERE_MISE_A_JOUR && field !== 'DERNIERE_MISE_A_JOUR' && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
-            data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
-        }
+        const data = {
+            [field]: value,
+            ...(field === 'DERNIERE_MISE_A_JOUR' || field === 'MODIFIE_PAR' ? {} : construireChampsSuivi())
+        };
 
         await W.updateRecords(W.formatRecord(todoId, data));
 
@@ -1760,6 +2158,9 @@ async function mettreAJourChamp(todoId, field, value, event) {
             if (data.DERNIERE_MISE_A_JOUR) {
                 record.DERNIERE_MISE_A_JOUR = data.DERNIERE_MISE_A_JOUR;
             }
+            if (data.MODIFIE_PAR) {
+                record.MODIFIE_PAR = data.MODIFIE_PAR;
+            }
         }
     } catch (error) {
         console.error(T('Error during update:'), error);
@@ -1767,20 +2168,34 @@ async function mettreAJourChamp(todoId, field, value, event) {
     }
 }
 
+function construireChampsSuivi() {
+    const data = {};
+
+    if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+        data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
+    }
+
+    if (W.map?.MODIFIE_PAR && !W.col.MODIFIE_PAR.getIsFormula()) {
+        data.MODIFIE_PAR = COMMENT_AUTHOR_PLACEHOLDER;
+    }
+
+    return data;
+}
+
 async function mettreAJourDateTechnique(rowId) {
-    if (!W.map?.DERNIERE_MISE_A_JOUR || W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+    const data = construireChampsSuivi();
+    if (Object.keys(data).length === 0) {
         return;
     }
 
     try {
-        const value = new Date().toISOString();
-        await W.updateRecords(W.formatRecord(rowId, {DERNIERE_MISE_A_JOUR: value}));
+        await W.updateRecords(W.formatRecord(rowId, data));
         const record = trouverRecord(rowId);
         if (record) {
-            record.DERNIERE_MISE_A_JOUR = value;
+            Object.assign(record, data);
         }
     } catch (error) {
-        console.warn('Données enregistrées, mais date technique non modifiée :', error);
+        console.warn('Données enregistrées, mais informations de suivi non modifiées :', error);
     }
 }
 
@@ -1806,7 +2221,7 @@ async function creerNouvelleTache(status) {
 
 async function supprimerTodo(todoId, event) {
     event?.stopPropagation();
-    if (!confirm(T('Are you sure you want to delete this task?'))) {
+    if (W.opt.confirmdelete !== false && !confirm(T('Are you sure you want to delete this task?'))) {
         return;
     }
 
@@ -1879,7 +2294,9 @@ document.addEventListener('keydown', (event) => {
 
 document.addEventListener('click', (event) => {
     const openedDropdown = event.target.closest('.multi-dropdown');
-    fermerTousLesMenusMultiples(openedDropdown);
+    if (W?.opt?.autoclosemenus !== false) {
+        fermerTousLesMenusMultiples(openedDropdown);
+    }
 
     const popup = document.getElementById('popup-todo');
     if (!popup?.classList.contains('visible')) {
@@ -1932,27 +2349,71 @@ function obtenirIdsResponsables(todo) {
         return directIds;
     }
 
-    const labels = obtenirLibellesResponsables(todo);
+    const labels = normaliserListeTexte(todo?.RESPONSABLE).filter((value) => value !== '#KeyError');
     const available = [...RESPONSABLES];
+
     return labels.flatMap((label) => {
         const index = available.findIndex((person) => person.label === label);
-        if (index < 0) {
-            return [];
-        }
+        if (index < 0) return [];
         const [person] = available.splice(index, 1);
         return [person.id];
     });
 }
 
-function obtenirLibellesResponsables(todo) {
-    const labels = normaliserListeTexte(todo?.RESPONSABLE).filter((value) => value !== '#KeyError');
-    if (labels.length > 0) {
-        return labels;
+function obtenirResponsables(todo) {
+    const ids = obtenirIdsResponsables(todo);
+    if (ids.length > 0) {
+        return ids.map((id) => RESPONSABLES_BY_ID.get(id)).filter(Boolean);
     }
 
-    return normaliserIdsRefList(todo?.RESPONSABLE_id)
-        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
-        .filter(Boolean);
+    return normaliserListeTexte(todo?.RESPONSABLE)
+        .filter((label) => label !== '#KeyError')
+        .map((label) => ({
+            id: 0,
+            label,
+            initials: calculerInitiales(label),
+            avatarColor: couleurAvatar(label)
+        }));
+}
+
+function obtenirLibellesResponsables(todo) {
+    return obtenirResponsables(todo).map((person) => person.label);
+}
+
+function obtenirIdsEtiquettes(todo) {
+    const directIds = normaliserIdsRefList(todo?.ETIQUETTES_id);
+    if (directIds.length > 0) {
+        return directIds;
+    }
+
+    const labels = normaliserListeTexte(todo?.ETIQUETTES).filter((value) => value !== '#KeyError');
+    const available = [...ETIQUETTES];
+
+    return labels.flatMap((label) => {
+        const index = available.findIndex((item) => item.label === label);
+        if (index < 0) return [];
+        const [item] = available.splice(index, 1);
+        return [item.id];
+    });
+}
+
+function obtenirEtiquettes(todo) {
+    const ids = obtenirIdsEtiquettes(todo);
+    if (ids.length > 0) {
+        return ids.map((id) => ETIQUETTES_BY_ID.get(id)).filter(Boolean);
+    }
+
+    return normaliserListeTexte(todo?.ETIQUETTES)
+        .filter((label) => label !== '#KeyError')
+        .map((label) => {
+            const color = couleurEtiquetteParDefaut(label);
+            return {
+                id: 0,
+                label,
+                color,
+                textColor: couleurTexteContraste(color)
+            };
+        });
 }
 
 function normaliserIdsRefList(value) {
@@ -1961,8 +2422,11 @@ function normaliserIdsRefList(value) {
 
 function normaliserIdsListe(value) {
     let values = normaliserTableau(value);
+
     if (values[0] === 'L') {
         values = values.slice(1);
+    } else if (values[0] === 'r') {
+        values = normaliserTableau(values[2]);
     }
 
     return [...new Set(values
@@ -1999,16 +2463,34 @@ function valeurTexte(value) {
 }
 
 function construireInfoCreation(todo) {
-    const hasCreationDate = Boolean(W.map?.CREE_LE && todo.CREE_LE);
-    const hasCreator = Boolean(W.map?.CREE_PAR && todo.CREE_PAR);
-    if (!hasCreationDate && !hasCreator) {
-        return '';
+    const lines = [];
+
+    const createdDate = W.map?.CREE_LE && todo.CREE_LE ? formatDateTime(todo.CREE_LE) : '';
+    const createdBy = W.map?.CREE_PAR ? valeurTexte(todo.CREE_PAR).trim() : '';
+
+    if (createdDate || createdBy) {
+        const createdParts = ['Créé'];
+        if (createdDate) createdParts.push(`le ${createdDate}`);
+        if (createdBy) createdParts.push(`par ${createdBy}`);
+        lines.push(`<div>${echapperHtml(createdParts.join(' '))}</div>`);
     }
 
-    const parts = [echapperHtml(T('Created'))];
-    if (hasCreationDate) parts.push(echapperHtml(T('on %on', {on: formatDate(todo.CREE_LE)})));
-    if (hasCreator) parts.push(echapperHtml(T('by %by', {by: valeurTexte(todo.CREE_PAR)})));
-    return parts.join(' ');
+    const modifiedDate = W.map?.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR
+        ? formatDateTime(todo.DERNIERE_MISE_A_JOUR)
+        : '';
+    const rawModifiedBy = W.map?.MODIFIE_PAR ? valeurTexte(todo.MODIFIE_PAR).trim() : '';
+    const modifiedBy = rawModifiedBy === COMMENT_AUTHOR_PLACEHOLDER
+        ? 'Nom Grist non configuré'
+        : rawModifiedBy;
+
+    if (modifiedDate || modifiedBy) {
+        const modifiedParts = ['Modifié'];
+        if (modifiedDate) modifiedParts.push(`le ${modifiedDate}`);
+        if (modifiedBy) modifiedParts.push(`par ${modifiedBy}`);
+        lines.push(`<div>${echapperHtml(modifiedParts.join(' '))}</div>`);
+    }
+
+    return lines.join('');
 }
 
 function afficherStatutSection(prefix, rowId, state, message) {
@@ -2154,3 +2636,9 @@ window.ajusterTextarea = ajusterTextarea;
 window.previsualiserCouleur = previsualiserCouleur;
 window.mettreAJourCouleur = mettreAJourCouleur;
 window.reinitialiserCouleur = reinitialiserCouleur;
+
+window.appliquerCommandeNotes = appliquerCommandeNotes;
+window.creerLienNotes = creerLienNotes;
+window.nettoyerCollageNotes = nettoyerCollageNotes;
+window.planifierEnregistrementNotes = planifierEnregistrementNotes;
+window.enregistrerNotesImmediatement = enregistrerNotesImmediatement;
