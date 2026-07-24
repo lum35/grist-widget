@@ -1,4 +1,4 @@
-// ========== KANBAN2 — VERSION 5 ==========
+// ========== KANBAN2 — VERSION 5.2 ==========
 // Notes enrichies, responsables et étiquettes en RefList, avatars compacts, pièces jointes et commentaires Grist.
 // Compatible avec WidgetSDK 1.2.0.62.
 
@@ -28,6 +28,9 @@ const LABEL_SAVE_QUEUES = new Map();
 const COMMENT_SAVE_QUEUES = new Map();
 const NOTES_SAVE_QUEUES = new Map();
 const NOTES_SAVE_TIMERS = new Map();
+
+let CONFIG_SAVE_TIMER = null;
+let CONFIG_SAVE_IN_PROGRESS = false;
 
 // ========== INITIALISATION ==========
 
@@ -64,6 +67,14 @@ window.addEventListener('load', async () => {
 
             WidgetSDK.newItem('showattachments', true, 'Pièces jointes', 'Afficher la section des pièces jointes dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showcomments', true, 'Commentaires', 'Afficher la section des commentaires dans la fiche.', '3 — Fiche descriptive'),
+            WidgetSDK.newItem('enablementions', true, 'Mentions @', 'Permettre de mentionner les membres dans les commentaires.', '3 — Fiche descriptive'),
+            WidgetSDK.newItem(
+                'mentionnotificationtable',
+                'Notifications_Kanban',
+                'Table des notifications',
+                'Table utilisée pour préparer un e-mail par personne mentionnée. L’envoi réel est réalisé par une Automatisation Grist.',
+                '3 — Fiche descriptive'
+            ),
             WidgetSDK.newItem('showmetadata', true, 'Informations de suivi', 'Afficher les lignes « Créé le » et « Modifié le » en bas de la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('autoclosemenus', true, 'Fermer les menus automatiquement', 'Fermer les sélecteurs multiples lorsqu’on clique ailleurs.', '3 — Fiche descriptive'),
 
@@ -118,6 +129,7 @@ window.addEventListener('load', async () => {
     });
 
     initialiserLecteurPiecesJointes();
+    installerSauvegardeAutomatiqueConfiguration();
 });
 
 // ========== CHARGEMENT DES LISTES ==========
@@ -138,30 +150,56 @@ async function chargerResponsables(force = false) {
     try {
         const reference = await chargerTableReference(colMeta);
         const dataColumns = reference.dataColumns;
+
         const initialsColumnId = trouverColonneParNoms(
             dataColumns,
             ['initiales', 'initiale', 'initials', 'abreviation', 'abréviation', 'sigle']
         ) || colonneSuivante(dataColumns, reference.visibleColumnId);
 
+        const emailColumnId = trouverColonneParNoms(
+            dataColumns,
+            [
+                'email', 'e-mail', 'mail', 'courriel',
+                'adresseemail', 'adresse_email',
+                'adressemail', 'adresse_mail'
+            ]
+        );
+
         const initialsValues = initialsColumnId && Array.isArray(reference.table[initialsColumnId])
             ? reference.table[initialsColumnId]
+            : [];
+
+        const emailValues = emailColumnId && Array.isArray(reference.table[emailColumnId])
+            ? reference.table[emailColumnId]
             : [];
 
         RESPONSABLES = reference.ids
             .map((rowId, index) => {
                 const label = valeurTexte(reference.labels[index]).trim();
                 const initials = nettoyerInitiales(initialsValues[index]) || calculerInitiales(label);
+                const email = normaliserEmail(emailValues[index]);
+
                 return {
                     id: Number(rowId),
                     label,
                     initials,
+                    email,
                     avatarColor: couleurAvatar(label || rowId)
                 };
             })
-            .filter((person) => Number.isInteger(person.id) && person.id > 0 && person.label && person.label !== '#KeyError')
-            .sort((a, b) => a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'}));
+            .filter((person) =>
+                Number.isInteger(person.id) &&
+                person.id > 0 &&
+                person.label &&
+                person.label !== '#KeyError'
+            )
+            .sort((a, b) =>
+                a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'})
+            );
 
-        RESPONSABLES_BY_ID = new Map(RESPONSABLES.map((person) => [person.id, person]));
+        RESPONSABLES_BY_ID = new Map(
+            RESPONSABLES.map((person) => [person.id, person])
+        );
         RESPONSABLES_LOADED_FOR = cacheKey;
     } catch (error) {
         viderCacheResponsables();
@@ -427,6 +465,121 @@ async function afficherKanban(records) {
 
     initialiserTriEtGlisserDeposer();
     document.querySelectorAll('.colonne-kanban').forEach(mettreAJourCompteur);
+}
+
+
+/**
+ * Le WidgetSDK n'enregistre normalement les options qu'au clic sur « Appliquer ».
+ * Cette surcouche sauvegarde aussi chaque modification sans fermer l'écran.
+ */
+function installerSauvegardeAutomatiqueConfiguration() {
+    const configView = document.getElementById('config-view');
+
+    if (!configView || configView.dataset.autosaveInstalled === 'true') {
+        return;
+    }
+
+    configView.dataset.autosaveInstalled = 'true';
+
+    configView.addEventListener('input', (event) => {
+        if (event.target.matches('input, textarea, select')) {
+            planifierSauvegardeConfiguration();
+        }
+    });
+
+    configView.addEventListener('change', (event) => {
+        if (event.target.matches('input, textarea, select')) {
+            planifierSauvegardeConfiguration();
+        }
+    });
+
+    // Les interrupteurs du WidgetSDK sont des div et non des inputs.
+    configView.addEventListener('click', (event) => {
+        if (event.target.closest('.config-switch')) {
+            // Laisser d'abord le SDK modifier la classe switch_on.
+            window.setTimeout(planifierSauvegardeConfiguration, 0);
+        }
+    });
+}
+
+function planifierSauvegardeConfiguration() {
+    window.clearTimeout(CONFIG_SAVE_TIMER);
+    afficherEtatSauvegardeConfiguration('saving', 'Sauvegarde…');
+
+    CONFIG_SAVE_TIMER = window.setTimeout(
+        sauvegarderConfigurationSansFermer,
+        350
+    );
+}
+
+async function sauvegarderConfigurationSansFermer() {
+    if (
+        CONFIG_SAVE_IN_PROGRESS ||
+        !W?._parameters ||
+        !W?._config ||
+        W._config.style.display === 'none'
+    ) {
+        return;
+    }
+
+    CONFIG_SAVE_IN_PROGRESS = true;
+
+    try {
+        W.opt = await W.readOptionValues(
+            W._parameters,
+            W._config,
+            W.opt
+        );
+
+        // Même stockage Grist que le bouton « Appliquer » du WidgetSDK.
+        await grist.widgetApi.setOption(
+            'options',
+            JSON.parse(JSON.stringify(W.opt))
+        );
+
+        await optionsChanged();
+        afficherEtatSauvegardeConfiguration('saved', 'Enregistré');
+
+        window.setTimeout(() => {
+            afficherEtatSauvegardeConfiguration('', '');
+        }, 1400);
+    } catch (error) {
+        console.error(
+            'Impossible de sauvegarder automatiquement la configuration :',
+            error
+        );
+        afficherEtatSauvegardeConfiguration(
+            'error',
+            'Échec de la sauvegarde'
+        );
+    } finally {
+        CONFIG_SAVE_IN_PROGRESS = false;
+    }
+}
+
+function afficherEtatSauvegardeConfiguration(state, message) {
+    const configView = document.getElementById('config-view');
+
+    if (!configView || configView.style.display === 'none') {
+        return;
+    }
+
+    let status = configView.querySelector('.config-autosave-status');
+
+    if (!status && message) {
+        status = document.createElement('div');
+        status.className = 'config-autosave-status';
+        status.setAttribute('aria-live', 'polite');
+        configView.appendChild(status);
+    }
+
+    if (!status) {
+        return;
+    }
+
+    status.className = `config-autosave-status${state ? ` ${state}` : ''}`;
+    status.textContent = message;
+    status.hidden = !message;
 }
 
 async function optionsChanged() {
@@ -827,26 +980,27 @@ async function togglePopupTodo(todo) {
 function construireEditeurNotes(todo, disabled) {
     const rowId = Number(todo.id);
     const value = normaliserHtmlNotes(todo.NOTES);
+    const hasContent = texteDepuisHtml(value).trim().length > 0;
     const disabledAttribute = disabled ? 'disabled' : '';
-    const contentEditable = disabled ? 'false' : 'true';
 
-    const buttons = [
+    const commandButtons = [
         ['bold', '<strong>B</strong>', 'Gras'],
         ['italic', '<em>I</em>', 'Italique'],
         ['underline', '<u>U</u>', 'Souligné'],
         ['strikeThrough', '<s>S</s>', 'Barré'],
         ['insertUnorderedList', '• Liste', 'Liste à puces'],
         ['insertOrderedList', '1. Liste', 'Liste numérotée'],
-        ['formatBlock', '❝', 'Citation', 'blockquote'],
+        ['insertHorizontalRule', '―', 'Ligne de séparation'],
         ['removeFormat', 'Tx', 'Effacer la mise en forme'],
         ['undo', '↶', 'Annuler'],
         ['redo', '↷', 'Rétablir']
-    ].map(([command, label, title, value]) => `
+    ].map(([command, label, title]) => `
         <button
             type="button"
             class="notes-tool"
+            data-command="${command}"
             onmousedown="event.preventDefault()"
-            onclick="appliquerCommandeNotes(this, '${command}', ${value ? `'${value}'` : 'null'}, event)"
+            onclick="appliquerCommandeNotes(this, '${command}', null, event)"
             title="${echapperAttribut(title)}"
             aria-label="${echapperAttribut(title)}"
             ${disabledAttribute}
@@ -854,42 +1008,215 @@ function construireEditeurNotes(todo, disabled) {
     `).join('');
 
     return `
-        <div class="field field-wide notes-field" data-row-id="${rowId}">
-            <label class="field-label">Notes</label>
-            <div class="notes-toolbar" role="toolbar" aria-label="Mise en forme des notes">
-                ${buttons}
+        <div
+            class="field field-wide notes-field"
+            data-row-id="${rowId}"
+            data-disabled="${disabled ? 'true' : 'false'}"
+        >
+            <div class="notes-heading">
+                <label class="field-label">Notes</label>
                 <button
                     type="button"
-                    class="notes-tool notes-tool-link"
-                    onmousedown="event.preventDefault()"
-                    onclick="creerLienNotes(this, event)"
-                    title="Ajouter ou modifier un lien"
-                    aria-label="Ajouter ou modifier un lien"
+                    class="notes-edit-button"
+                    onclick="activerEditionNotes(this, event)"
                     ${disabledAttribute}
-                >🔗 Lien</button>
-                <button
-                    type="button"
-                    class="notes-tool"
-                    onmousedown="event.preventDefault()"
-                    onclick="appliquerCommandeNotes(this, 'unlink', null, event)"
-                    title="Retirer le lien"
-                    aria-label="Retirer le lien"
-                    ${disabledAttribute}
-                >⛓̸</button>
+                >✏️ Modifier</button>
             </div>
+
             <div
-                class="notes-editor"
-                contenteditable="${contentEditable}"
-                data-placeholder="Ajoutez des notes…"
-                oninput="planifierEnregistrementNotes(${rowId}, this)"
-                onblur="enregistrerNotesImmediatement(${rowId}, this)"
-                onpaste="nettoyerCollageNotes(this, event)"
-                role="textbox"
-                aria-multiline="true"
-            >${value}</div>
-            <div id="notes-status-${rowId}" class="section-status notes-status" aria-live="polite"></div>
+                class="notes-display${hasContent ? '' : ' empty'}"
+                tabindex="0"
+            >${hasContent ? value : 'Aucune note pour cette tâche.'}</div>
+
+            <div class="notes-edit-panel" hidden>
+                <div class="notes-toolbar" role="toolbar" aria-label="Mise en forme des notes">
+                    <label class="sr-only" for="notes-format-${rowId}">Style du paragraphe</label>
+                    <select
+                        id="notes-format-${rowId}"
+                        class="notes-format-select"
+                        onchange="appliquerFormatBlocNotes(this, event)"
+                        title="Style du paragraphe"
+                        ${disabledAttribute}
+                    >
+                        <option value="p">Paragraphe</option>
+                        <option value="h2">Titre</option>
+                        <option value="h3">Sous-titre</option>
+                        <option value="blockquote">Citation</option>
+                        <option value="pre">Bloc de code</option>
+                    </select>
+
+                    <span class="notes-toolbar-separator" aria-hidden="true"></span>
+
+                    ${commandButtons}
+
+                    <button
+                        type="button"
+                        class="notes-tool"
+                        onmousedown="event.preventDefault()"
+                        onclick="appliquerBaliseSelectionNotes(this, 'code', event)"
+                        title="Code dans la ligne"
+                        aria-label="Code dans la ligne"
+                        ${disabledAttribute}
+                    >&lt;/&gt;</button>
+
+                    <button
+                        type="button"
+                        class="notes-tool"
+                        onmousedown="event.preventDefault()"
+                        onclick="appliquerBaliseSelectionNotes(this, 'mark', event)"
+                        title="Surligner"
+                        aria-label="Surligner"
+                        ${disabledAttribute}
+                    >🖍</button>
+
+                    <button
+                        type="button"
+                        class="notes-tool notes-tool-link"
+                        onmousedown="event.preventDefault()"
+                        onclick="creerLienNotes(this, event)"
+                        title="Ajouter ou modifier un lien"
+                        aria-label="Ajouter ou modifier un lien"
+                        ${disabledAttribute}
+                    >🔗 Lien</button>
+
+                    <button
+                        type="button"
+                        class="notes-tool"
+                        data-command="unlink"
+                        onmousedown="event.preventDefault()"
+                        onclick="appliquerCommandeNotes(this, 'unlink', null, event)"
+                        title="Retirer le lien"
+                        aria-label="Retirer le lien"
+                        ${disabledAttribute}
+                    >⛓̸</button>
+                </div>
+
+                <div
+                    class="notes-editor"
+                    contenteditable="${disabled ? 'false' : 'true'}"
+                    data-placeholder="Ajoutez des notes…"
+                    oninput="marquerNotesModifiees(this)"
+                    onpaste="nettoyerCollageNotes(this, event)"
+                    onkeyup="mettreAJourEtatBarreNotes(this)"
+                    onmouseup="mettreAJourEtatBarreNotes(this)"
+                    onkeydown="gererRaccourcisNotes(this, event)"
+                    role="textbox"
+                    aria-multiline="true"
+                >${value}</div>
+
+                <div class="notes-edit-footer">
+                    <div
+                        id="notes-status-${rowId}"
+                        class="section-status notes-status"
+                        aria-live="polite"
+                    ></div>
+                    <div class="notes-edit-actions">
+                        <button
+                            type="button"
+                            class="notes-cancel-button"
+                            onclick="annulerEditionNotes(this, event)"
+                        >Annuler</button>
+                        <button
+                            type="button"
+                            class="notes-save-button"
+                            onclick="enregistrerEtFermerNotes(this, event)"
+                        >Enregistrer</button>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
+}
+
+function activerEditionNotes(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const panel = field?.querySelector('.notes-edit-panel');
+    const display = field?.querySelector('.notes-display');
+    const editor = field?.querySelector('.notes-editor');
+
+    if (
+        !field ||
+        !panel ||
+        !display ||
+        !editor ||
+        field.dataset.disabled === 'true'
+    ) {
+        return;
+    }
+
+    field._originalNotesHtml = sanitiserHtmlNotes(editor.innerHTML);
+    field.classList.add('is-editing');
+    field.classList.remove('is-dirty');
+    display.hidden = true;
+    panel.hidden = false;
+    button.hidden = true;
+
+    document.execCommand('defaultParagraphSeparator', false, 'p');
+    editor.focus();
+    placerCurseurFin(editor);
+    mettreAJourEtatBarreNotes(editor);
+    setNotesStatus(Number(field.dataset.rowId), '', '');
+}
+
+function annulerEditionNotes(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+
+    if (!field || !editor) {
+        return;
+    }
+
+    editor.innerHTML = field._originalNotesHtml || '';
+    fermerEditionNotes(field, false);
+}
+
+async function enregistrerEtFermerNotes(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+    const rowId = Number(field?.dataset?.rowId);
+
+    if (!field || !editor || !Number.isInteger(rowId) || rowId <= 0) {
+        return;
+    }
+
+    button.disabled = true;
+
+    try {
+        const savedHtml = await enregistrerNotes(rowId, editor);
+        field._originalNotesHtml = savedHtml;
+        fermerEditionNotes(field, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function fermerEditionNotes(field, updateDisplay) {
+    const panel = field.querySelector('.notes-edit-panel');
+    const display = field.querySelector('.notes-display');
+    const editor = field.querySelector('.notes-editor');
+    const editButton = field.querySelector('.notes-edit-button');
+
+    if (updateDisplay && display && editor) {
+        const html = sanitiserHtmlNotes(editor.innerHTML).trim();
+        const hasContent = texteDepuisHtml(html).trim().length > 0;
+        display.innerHTML = hasContent ? html : 'Aucune note pour cette tâche.';
+        display.classList.toggle('empty', !hasContent);
+    }
+
+    field.classList.remove('is-editing', 'is-dirty');
+    if (panel) panel.hidden = true;
+    if (display) display.hidden = false;
+    if (editButton) editButton.hidden = false;
+    setNotesStatus(Number(field.dataset.rowId), '', '');
 }
 
 function normaliserHtmlNotes(rawValue) {
@@ -913,17 +1240,18 @@ function sanitiserHtmlNotes(html) {
     const allowedTags = new Set([
         'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE',
         'A', 'UL', 'OL', 'LI', 'P', 'DIV', 'BR',
-        'BLOCKQUOTE', 'H2', 'H3', 'SPAN'
+        'BLOCKQUOTE', 'H2', 'H3', 'SPAN',
+        'CODE', 'PRE', 'HR', 'MARK'
+    ]);
+
+    const dangerousTags = new Set([
+        'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED',
+        'FORM', 'INPUT', 'BUTTON', 'SVG', 'MATH', 'META', 'LINK'
     ]);
 
     const walk = (node) => {
         Array.from(node.childNodes).forEach((child) => {
             if (child.nodeType === Node.ELEMENT_NODE) {
-                const dangerousTags = new Set([
-                    'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED',
-                    'FORM', 'INPUT', 'BUTTON', 'SVG', 'MATH', 'META', 'LINK'
-                ]);
-
                 if (dangerousTags.has(child.tagName)) {
                     child.remove();
                     return;
@@ -938,6 +1266,7 @@ function sanitiserHtmlNotes(html) {
                 Array.from(child.attributes).forEach((attribute) => {
                     const allowedLinkAttribute = child.tagName === 'A'
                         && ['href', 'target', 'rel'].includes(attribute.name.toLowerCase());
+
                     if (!allowedLinkAttribute) {
                         child.removeAttribute(attribute.name);
                     }
@@ -949,6 +1278,7 @@ function sanitiserHtmlNotes(html) {
                         child.replaceWith(...Array.from(child.childNodes));
                         return;
                     }
+
                     child.setAttribute('href', href);
                     child.setAttribute('target', '_blank');
                     child.setAttribute('rel', 'noopener noreferrer');
@@ -965,19 +1295,83 @@ function sanitiserHtmlNotes(html) {
     return template.innerHTML;
 }
 
+function appliquerFormatBlocNotes(select, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = select.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+
+    if (!editor || editor.contentEditable !== 'true') {
+        return;
+    }
+
+    editor.focus();
+    document.execCommand('formatBlock', false, select.value || 'p');
+    marquerNotesModifiees(editor);
+    mettreAJourEtatBarreNotes(editor);
+}
+
 function appliquerCommandeNotes(button, command, value, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
     const field = button.closest('.notes-field');
     const editor = field?.querySelector('.notes-editor');
+
     if (!editor || editor.contentEditable !== 'true') {
         return;
     }
 
     editor.focus();
     document.execCommand(command, false, value);
-    planifierEnregistrementNotes(Number(field.dataset.rowId), editor);
+    marquerNotesModifiees(editor);
+    mettreAJourEtatBarreNotes(editor);
+}
+
+function appliquerBaliseSelectionNotes(button, tagName, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.notes-field');
+    const editor = field?.querySelector('.notes-editor');
+    const selection = window.getSelection();
+
+    if (
+        !editor ||
+        editor.contentEditable !== 'true' ||
+        !selection ||
+        selection.rangeCount === 0
+    ) {
+        return;
+    }
+
+    editor.focus();
+    const range = selection.getRangeAt(0);
+
+    if (!editor.contains(range.commonAncestorContainer)) {
+        return;
+    }
+
+    const selectedText = range.toString();
+    const tag = tagName === 'mark' ? 'mark' : 'code';
+
+    if (selectedText) {
+        document.execCommand(
+            'insertHTML',
+            false,
+            `<${tag}>${echapperHtml(selectedText)}</${tag}>`
+        );
+    } else {
+        document.execCommand(
+            'insertHTML',
+            false,
+            `<${tag}>&#8203;</${tag}>`
+        );
+    }
+
+    marquerNotesModifiees(editor);
+    mettreAJourEtatBarreNotes(editor);
 }
 
 function creerLienNotes(button, event) {
@@ -986,6 +1380,7 @@ function creerLienNotes(button, event) {
 
     const field = button.closest('.notes-field');
     const editor = field?.querySelector('.notes-editor');
+
     if (!editor || editor.contentEditable !== 'true') {
         return;
     }
@@ -1003,18 +1398,19 @@ function creerLienNotes(button, event) {
     }
 
     const selection = window.getSelection();
+
     if (!selection || selection.isCollapsed) {
-        document.execCommand('insertHTML', false, `<a href="${echapperAttribut(url)}" target="_blank" rel="noopener noreferrer">${echapperHtml(url)}</a>`);
+        document.execCommand(
+            'insertHTML',
+            false,
+            `<a href="${echapperAttribut(url)}" target="_blank" rel="noopener noreferrer">${echapperHtml(url)}</a>`
+        );
     } else {
         document.execCommand('createLink', false, url);
-        const anchor = selection.anchorNode?.parentElement?.closest?.('a');
-        if (anchor) {
-            anchor.target = '_blank';
-            anchor.rel = 'noopener noreferrer';
-        }
     }
 
-    planifierEnregistrementNotes(Number(field.dataset.rowId), editor);
+    marquerNotesModifiees(editor);
+    mettreAJourEtatBarreNotes(editor);
 }
 
 function normaliserUrlLien(rawUrl) {
@@ -1029,7 +1425,9 @@ function normaliserUrlLien(rawUrl) {
 
     try {
         const url = new URL(candidate);
-        return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) ? url.href : '';
+        return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)
+            ? url.href
+            : '';
     } catch (_) {
         return '';
     }
@@ -1041,6 +1439,7 @@ function nettoyerCollageNotes(editor, event) {
     }
 
     event.preventDefault();
+
     const rich = event.clipboardData.getData('text/html');
     const plain = event.clipboardData.getData('text/plain');
     const content = rich
@@ -1048,32 +1447,111 @@ function nettoyerCollageNotes(editor, event) {
         : echapperHtml(plain).replace(/\r?\n/g, '<br>');
 
     document.execCommand('insertHTML', false, content);
-    const field = editor.closest('.notes-field');
-    planifierEnregistrementNotes(Number(field?.dataset?.rowId), editor);
+    marquerNotesModifiees(editor);
 }
 
-function planifierEnregistrementNotes(rowId, editor) {
-    const resolvedRowId = Number(rowId);
-    window.clearTimeout(NOTES_SAVE_TIMERS.get(resolvedRowId));
-    setNotesStatus(resolvedRowId, 'saving', 'Modifications en attente…');
+function marquerNotesModifiees(editor) {
+    const field = editor?.closest('.notes-field');
+    if (!field) {
+        return;
+    }
 
-    const timer = window.setTimeout(() => {
-        enregistrerNotes(resolvedRowId, editor);
-    }, 700);
-
-    NOTES_SAVE_TIMERS.set(resolvedRowId, timer);
+    field.classList.add('is-dirty');
+    setNotesStatus(
+        Number(field.dataset.rowId),
+        'saving',
+        'Modifications non enregistrées'
+    );
 }
 
-function enregistrerNotesImmediatement(rowId, editor) {
-    const resolvedRowId = Number(rowId);
-    window.clearTimeout(NOTES_SAVE_TIMERS.get(resolvedRowId));
-    NOTES_SAVE_TIMERS.delete(resolvedRowId);
-    enregistrerNotes(resolvedRowId, editor);
+function mettreAJourEtatBarreNotes(editor) {
+    const field = editor?.closest('.notes-field');
+    if (!field || !field.classList.contains('is-editing')) {
+        return;
+    }
+
+    field.querySelectorAll('.notes-tool[data-command]').forEach((button) => {
+        let active = false;
+
+        try {
+            active = document.queryCommandState(button.dataset.command);
+        } catch (_) {
+            active = false;
+        }
+
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    const formatSelect = field.querySelector('.notes-format-select');
+    if (formatSelect) {
+        let format = 'p';
+
+        try {
+            format = valeurTexte(document.queryCommandValue('formatBlock'))
+                .replace(/[<>]/g, '')
+                .toLowerCase() || 'p';
+        } catch (_) {
+            format = 'p';
+        }
+
+        if (Array.from(formatSelect.options).some((option) => option.value === format)) {
+            formatSelect.value = format;
+        } else {
+            formatSelect.value = 'p';
+        }
+    }
+}
+
+function gererRaccourcisNotes(editor, event) {
+    if (!(event.ctrlKey || event.metaKey)) {
+        return;
+    }
+
+    const key = event.key.toLowerCase();
+
+    if (key === 'k') {
+        event.preventDefault();
+        const button = editor
+            .closest('.notes-field')
+            ?.querySelector('.notes-tool-link');
+        if (button) {
+            creerLienNotes(button, event);
+        }
+    }
+
+    if (event.shiftKey && key === '7') {
+        event.preventDefault();
+        document.execCommand('insertOrderedList');
+        marquerNotesModifiees(editor);
+    }
+
+    if (event.shiftKey && key === '8') {
+        event.preventDefault();
+        document.execCommand('insertUnorderedList');
+        marquerNotesModifiees(editor);
+    }
+}
+
+function placerCurseurFin(element) {
+    const range = document.createRange();
+    const selection = window.getSelection();
+
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+}
+
+function texteDepuisHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = valeurTexte(html);
+    return template.content.textContent || '';
 }
 
 async function enregistrerNotes(rowId, editor) {
     if (!editor) {
-        return;
+        return '';
     }
 
     const resolvedRowId = Number(rowId);
@@ -1084,15 +1562,29 @@ async function enregistrerNotes(rowId, editor) {
 
     const next = previous
         .catch(() => undefined)
-        .then(() => mettreAJourChamp(resolvedRowId, 'NOTES', sanitized || null))
+        .then(() =>
+            mettreAJourChamp(
+                resolvedRowId,
+                'NOTES',
+                sanitized || null
+            )
+        )
         .then(() => {
             editor.innerHTML = sanitized;
             setNotesStatus(resolvedRowId, 'saved', 'Enregistré');
-            window.setTimeout(() => setNotesStatus(resolvedRowId, '', ''), 1200);
+            return sanitized;
         })
         .catch((error) => {
-            setNotesStatus(resolvedRowId, 'error', 'Échec de l’enregistrement');
-            console.error('Erreur pendant l’enregistrement des notes :', error);
+            setNotesStatus(
+                resolvedRowId,
+                'error',
+                'Échec de l’enregistrement'
+            );
+            console.error(
+                'Erreur pendant l’enregistrement des notes :',
+                error
+            );
+            throw error;
         })
         .finally(() => {
             if (NOTES_SAVE_QUEUES.get(resolvedRowId) === next) {
@@ -1101,15 +1593,20 @@ async function enregistrerNotes(rowId, editor) {
         });
 
     NOTES_SAVE_QUEUES.set(resolvedRowId, next);
-    await next;
+    return next;
 }
 
 function setNotesStatus(rowId, state, message) {
-    const status = document.getElementById(`notes-status-${Number(rowId)}`);
+    const status = document.getElementById(
+        `notes-status-${Number(rowId)}`
+    );
+
     if (!status) {
         return;
     }
-    status.className = `section-status notes-status${state ? ` ${state}` : ''}`;
+
+    status.className =
+        `section-status notes-status${state ? ` ${state}` : ''}`;
     status.textContent = message;
 }
 
@@ -1909,34 +2406,320 @@ function iconePieceJointe(kind) {
 
 function construireSectionCommentaires(todo) {
     const comments = parserCommentaires(todo.COMMENTAIRES);
+    const mentionsEnabled = W.opt.enablementions !== false;
 
     return `
-        <section class="detail-section comments-section" data-row-id="${Number(todo.id)}">
+        <section
+            class="detail-section comments-section"
+            data-row-id="${Number(todo.id)}"
+        >
             <div class="detail-section-header">
                 <div>
                     <h3>💬 Commentaires</h3>
                     <p>${comments.length} commentaire(s)</p>
                 </div>
             </div>
-            <div id="comments-list-${Number(todo.id)}" class="comments-list">
+
+            <div
+                id="comments-list-${Number(todo.id)}"
+                class="comments-list"
+            >
                 ${construireListeCommentaires(comments, todo.id)}
             </div>
+
             <div class="comment-composer">
-                <textarea
-                    class="comment-input"
-                    placeholder="Écrire un commentaire…"
-                    oninput="ajusterTextarea(this)"
-                ></textarea>
-                <div class="comment-grist-author">
-                    Le nom est renseigné automatiquement par Grist avec <code>user.Name</code>.
+                <div class="comment-input-wrapper">
+                    <textarea
+                        class="comment-input"
+                        placeholder="Écrire un commentaire${mentionsEnabled ? ' — utilisez @ pour mentionner quelqu’un' : ''}…"
+                        oninput="ajusterTextarea(this); gererSaisieMention(this)"
+                        onkeydown="gererTouchesMention(this, event)"
+                    ></textarea>
+
+                    ${mentionsEnabled ? construireMenuMentions() : ''}
                 </div>
+
+                ${mentionsEnabled ? `
+                    <div class="comment-mention-tools">
+                        <button
+                            type="button"
+                            class="comment-mention-button"
+                            onclick="ouvrirMenuMentions(this, event)"
+                        >@ Mentionner</button>
+                        <div class="comment-selected-mentions"></div>
+                    </div>
+                ` : ''}
+
+                <div class="comment-grist-author">
+                    Le nom de l’auteur est renseigné par Grist avec
+                    <code>user.Name</code>.
+                    ${mentionsEnabled
+                        ? 'Les e-mails sont préparés dans la table de notifications configurée.'
+                        : ''}
+                </div>
+
                 <div class="comment-composer-footer">
-                    <div id="comments-status-${Number(todo.id)}" class="section-status" aria-live="polite"></div>
-                    <button type="button" onclick="ajouterCommentaire(${Number(todo.id)}, this, event)">Commenter</button>
+                    <div
+                        id="comments-status-${Number(todo.id)}"
+                        class="section-status"
+                        aria-live="polite"
+                    ></div>
+                    <button
+                        type="button"
+                        onclick="ajouterCommentaire(${Number(todo.id)}, this, event)"
+                    >Commenter</button>
                 </div>
             </div>
         </section>
     `;
+}
+
+function construireMenuMentions() {
+    const options = RESPONSABLES.map((person) => `
+        <button
+            type="button"
+            class="mention-option"
+            data-member-id="${person.id}"
+            data-search="${echapperAttribut(
+                `${person.label} ${person.email || ''}`.toLocaleLowerCase(
+                    W.cultureFull
+                )
+            )}"
+            onclick="selectionnerMentionCommentaire(this, ${person.id}, event)"
+        >
+            <span
+                class="mention-option-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+            >${echapperHtml(person.initials)}</span>
+            <span class="mention-option-text">
+                <strong>${echapperHtml(person.label)}</strong>
+                <small>${person.email
+                    ? echapperHtml(person.email)
+                    : 'E-mail manquant dans la table Membres'}</small>
+            </span>
+        </button>
+    `).join('');
+
+    return `
+        <div class="mention-menu" hidden>
+            <div class="mention-menu-header">
+                <strong>Mentionner un membre</strong>
+                <button
+                    type="button"
+                    onclick="fermerMenuMentions(this, event)"
+                    aria-label="Fermer"
+                >×</button>
+            </div>
+            <div class="mention-options">
+                ${options || '<div class="section-empty">Aucun membre disponible</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function ouvrirMenuMentions(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const composer = button.closest('.comment-composer');
+    const menu = composer?.querySelector('.mention-menu');
+
+    if (!menu) {
+        return;
+    }
+
+    menu.hidden = false;
+    filtrerMenuMentions(menu, '');
+}
+
+function fermerMenuMentions(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const menu = button.closest('.mention-menu');
+    if (menu) {
+        menu.hidden = true;
+    }
+}
+
+function gererSaisieMention(textarea) {
+    const composer = textarea.closest('.comment-composer');
+    const menu = composer?.querySelector('.mention-menu');
+
+    if (!menu || W.opt.enablementions === false) {
+        return;
+    }
+
+    const context = trouverContexteMention(textarea);
+
+    if (!context) {
+        menu.hidden = true;
+        return;
+    }
+
+    menu.hidden = false;
+    menu.dataset.mentionStart = String(context.start);
+    filtrerMenuMentions(menu, context.query);
+}
+
+function gererTouchesMention(textarea, event) {
+    const composer = textarea.closest('.comment-composer');
+    const menu = composer?.querySelector('.mention-menu');
+
+    if (!menu || menu.hidden) {
+        return;
+    }
+
+    const visibleOptions = Array.from(
+        menu.querySelectorAll('.mention-option:not([hidden])')
+    );
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        menu.hidden = true;
+        textarea.focus();
+        return;
+    }
+
+    if (event.key === 'Enter' && visibleOptions.length === 1) {
+        event.preventDefault();
+        visibleOptions[0].click();
+    }
+}
+
+function filtrerMenuMentions(menu, query) {
+    const normalized = valeurTexte(query)
+        .trim()
+        .toLocaleLowerCase(W.cultureFull);
+
+    menu.querySelectorAll('.mention-option').forEach((option) => {
+        option.hidden =
+            normalized !== '' &&
+            !valeurTexte(option.dataset.search).includes(normalized);
+    });
+}
+
+function trouverContexteMention(textarea) {
+    const caret = Number(textarea.selectionStart);
+    const before = textarea.value.slice(0, caret);
+    const match = before.match(/(?:^|\s)@([^@\n]*)$/);
+
+    if (!match) {
+        return null;
+    }
+
+    const query = match[1];
+    return {
+        query,
+        start: caret - query.length - 1,
+        end: caret
+    };
+}
+
+function selectionnerMentionCommentaire(button, memberId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const composer = button.closest('.comment-composer');
+    const textarea = composer?.querySelector('.comment-input');
+    const menu = composer?.querySelector('.mention-menu');
+    const person = RESPONSABLES_BY_ID.get(Number(memberId));
+
+    if (!composer || !textarea || !person) {
+        return;
+    }
+
+    const context = trouverContexteMention(textarea);
+    const token = `@${person.label}`;
+
+    if (context) {
+        textarea.setRangeText(
+            `${token} `,
+            context.start,
+            context.end,
+            'end'
+        );
+    } else {
+        const separator =
+            textarea.value &&
+            !/\s$/.test(textarea.value)
+                ? ' '
+                : '';
+
+        textarea.setRangeText(
+            `${separator}${token} `,
+            textarea.selectionStart,
+            textarea.selectionEnd,
+            'end'
+        );
+    }
+
+    if (!composer._selectedMentions) {
+        composer._selectedMentions = new Map();
+    }
+
+    composer._selectedMentions.set(person.id, {
+        id: person.id,
+        name: person.label,
+        email: person.email || ''
+    });
+
+    afficherMentionsSelectionnees(composer);
+    if (menu) {
+        menu.hidden = true;
+    }
+
+    textarea.focus();
+    ajusterTextarea(textarea);
+}
+
+function afficherMentionsSelectionnees(composer) {
+    const container = composer.querySelector(
+        '.comment-selected-mentions'
+    );
+
+    if (!container) {
+        return;
+    }
+
+    const mentions = Array.from(
+        composer._selectedMentions?.values?.() || []
+    );
+
+    container.innerHTML = mentions.map((mention) => `
+        <span class="selected-mention-chip">
+            @${echapperHtml(mention.name)}
+            <button
+                type="button"
+                onclick="retirerMentionCommentaire(this, ${Number(mention.id)}, event)"
+                aria-label="Retirer ${echapperAttribut(mention.name)}"
+            >×</button>
+        </span>
+    `).join('');
+}
+
+function retirerMentionCommentaire(button, memberId, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const composer = button.closest('.comment-composer');
+    const textarea = composer?.querySelector('.comment-input');
+    const person = RESPONSABLES_BY_ID.get(Number(memberId));
+
+    composer?._selectedMentions?.delete(Number(memberId));
+
+    if (textarea && person) {
+        const token = `@${person.label}`;
+        textarea.value = textarea.value
+            .replaceAll(token, '')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trimStart();
+
+        ajusterTextarea(textarea);
+    }
+
+    if (composer) {
+        afficherMentionsSelectionnees(composer);
+    }
 }
 
 function construireListeCommentaires(comments, rowId) {
@@ -1945,25 +2728,67 @@ function construireListeCommentaires(comments, rowId) {
     }
 
     return comments.map((comment) => `
-        <article class="comment-card" data-comment-id="${echapperAttribut(comment.id)}">
+        <article
+            class="comment-card"
+            data-comment-id="${echapperAttribut(comment.id)}"
+        >
             <div class="comment-header">
-                <strong>${echapperHtml(comment.author === COMMENT_AUTHOR_PLACEHOLDER ? 'Nom Grist non configuré' : (comment.author || 'Anonyme'))}</strong>
+                <strong>${echapperHtml(
+                    comment.author === COMMENT_AUTHOR_PLACEHOLDER
+                        ? 'Nom Grist non configuré'
+                        : (comment.author || 'Anonyme')
+                )}</strong>
                 <span>${echapperHtml(formatDateTime(comment.createdAt))}</span>
-                <button type="button" onclick="supprimerCommentaire(${Number(rowId)}, '${echapperJs(comment.id)}', event)" title="Supprimer le commentaire">×</button>
+                <button
+                    type="button"
+                    onclick="supprimerCommentaire(
+                        ${Number(rowId)},
+                        '${echapperJs(comment.id)}',
+                        event
+                    )"
+                    title="Supprimer le commentaire"
+                >×</button>
             </div>
-            <div class="comment-body">${echapperHtml(comment.text).replace(/\n/g, '<br>')}</div>
+            <div class="comment-body">
+                ${construireCorpsCommentaire(comment)}
+            </div>
         </article>
     `).join('');
 }
 
+function construireCorpsCommentaire(comment) {
+    let html = echapperHtml(comment.text).replace(/\n/g, '<br>');
+
+    const mentions = normaliserMentionsCommentaire(comment.mentions)
+        .sort((a, b) => b.name.length - a.name.length);
+
+    mentions.forEach((mention) => {
+        const escapedToken = echapperHtml(`@${mention.name}`);
+        const badge = `
+            <span
+                class="comment-mention"
+                title="${echapperAttribut(
+                    mention.email || mention.name
+                )}"
+            >${escapedToken}</span>
+        `;
+
+        html = html.split(escapedToken).join(badge);
+    });
+
+    return html;
+}
+
 function parserCommentaires(rawValue) {
     const raw = valeurTexte(rawValue).trim();
+
     if (!raw) {
         return [];
     }
 
     try {
         const parsed = JSON.parse(raw);
+
         if (!Array.isArray(parsed)) {
             throw new Error('Format non tableau');
         }
@@ -1973,43 +2798,75 @@ function parserCommentaires(rawValue) {
                 id: valeurTexte(comment?.id) || `legacy-${index}`,
                 author: valeurTexte(comment?.author) || 'Anonyme',
                 createdAt: valeurTexte(comment?.createdAt),
-                text: valeurTexte(comment?.text)
+                text: valeurTexte(comment?.text),
+                mentions: normaliserMentionsCommentaire(
+                    comment?.mentions
+                )
             }))
             .filter((comment) => comment.text.trim());
     } catch (_) {
-        // Compatibilité avec une ancienne cellule de texte simple.
         return [{
             id: 'legacy-text',
             author: 'Ancien commentaire',
             createdAt: '',
-            text: raw
+            text: raw,
+            mentions: []
         }];
     }
 }
 
+function normaliserMentionsCommentaire(rawMentions) {
+    return normaliserTableau(rawMentions)
+        .map((mention) => ({
+            id: Number(mention?.id) || 0,
+            name: valeurTexte(
+                mention?.name || mention?.label
+            ).trim(),
+            email: normaliserEmail(mention?.email)
+        }))
+        .filter((mention) => mention.name);
+}
 
 async function ajouterCommentaire(rowId, button, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
     const section = button.closest('.comments-section');
-    const textarea = section?.querySelector('.comment-input');
+    const composer = section?.querySelector('.comment-composer');
+    const textarea = composer?.querySelector('.comment-input');
     const text = valeurTexte(textarea?.value).trim();
 
     if (!text) {
-        afficherStatutSection('comments', rowId, 'error', 'Écrivez un commentaire.');
+        afficherStatutSection(
+            'comments',
+            rowId,
+            'error',
+            'Écrivez un commentaire.'
+        );
         textarea?.focus();
         return;
     }
 
+    const selectedMentions = Array.from(
+        composer?._selectedMentions?.values?.() || []
+    ).filter((mention) =>
+        text.includes(`@${mention.name}`)
+    );
+
     button.disabled = true;
-    afficherStatutSection('comments', rowId, 'saving', 'Enregistrement…');
+    afficherStatutSection(
+        'comments',
+        rowId,
+        'saving',
+        'Enregistrement…'
+    );
 
     const comment = {
         id: genererIdentifiant(),
         author: COMMENT_AUTHOR_PLACEHOLDER,
         createdAt: new Date().toISOString(),
-        text
+        text,
+        mentions: selectedMentions
     };
 
     try {
@@ -2018,12 +2875,33 @@ async function ajouterCommentaire(rowId, button, event) {
             (comments) => [...comments, comment]
         );
 
-        const savedComment = savedComments.find((item) => item.id === comment.id);
-        if (!savedComment || savedComment.author === COMMENT_AUTHOR_PLACEHOLDER) {
+        const savedComment = savedComments.find(
+            (item) => item.id === comment.id
+        );
+
+        if (
+            !savedComment ||
+            savedComment.author === COMMENT_AUTHOR_PLACEHOLDER
+        ) {
             throw new Error(
-                'La formule d’initialisation user.Name n’a pas remplacé le nom temporaire. ' +
-                'Configurez la colonne Commentaires comme indiqué dans le README.'
+                'La formule user.Name n’a pas remplacé le nom temporaire.'
             );
+        }
+
+        let notificationResult = {
+            prepared: 0,
+            missingEmails: []
+        };
+
+        if (
+            W.opt.enablementions !== false &&
+            savedComment.mentions.length > 0
+        ) {
+            notificationResult =
+                await preparerNotificationsMentions(
+                    rowId,
+                    savedComment
+                );
         }
 
         if (textarea) {
@@ -2031,20 +2909,125 @@ async function ajouterCommentaire(rowId, button, event) {
             ajusterTextarea(textarea);
         }
 
+        if (composer) {
+            composer._selectedMentions = new Map();
+            afficherMentionsSelectionnees(composer);
+            const menu = composer.querySelector('.mention-menu');
+            if (menu) {
+                menu.hidden = true;
+            }
+        }
+
         rafraichirCommentaires(rowId);
-        afficherStatutSection('comments', rowId, 'saved', `Commentaire ajouté par ${savedComment.author}.`);
+
+        const messages = [
+            `Commentaire ajouté par ${savedComment.author}.`
+        ];
+
+        if (notificationResult.prepared > 0) {
+            messages.push(
+                `${notificationResult.prepared} notification(s) transmise(s) à l’automatisation.`
+            );
+        }
+
+        if (notificationResult.missingEmails.length > 0) {
+            messages.push(
+                `E-mail manquant pour : ${notificationResult.missingEmails.join(', ')}.`
+            );
+        }
+
+        afficherStatutSection(
+            'comments',
+            rowId,
+            notificationResult.missingEmails.length > 0
+                ? 'warning'
+                : 'saved',
+            messages.join(' ')
+        );
     } catch (error) {
-        console.error('Erreur pendant l’ajout du commentaire :', error);
+        console.error(
+            'Erreur pendant l’ajout du commentaire :',
+            error
+        );
+
         rafraichirCommentaires(rowId);
         afficherStatutSection(
             'comments',
             rowId,
             'error',
-            'Le commentaire a été envoyé, mais Grist n’a pas renseigné user.Name. Vérifiez la formule d’initialisation.'
+            valeurTexte(error?.message) ||
+            'Impossible d’ajouter le commentaire.'
         );
     } finally {
         button.disabled = false;
     }
+}
+
+async function preparerNotificationsMentions(rowId, comment) {
+    const mentions = normaliserMentionsCommentaire(comment.mentions);
+    const missingEmails = mentions
+        .filter((mention) => !mention.email)
+        .map((mention) => mention.name);
+
+    const recipients = [
+        ...new Map(
+            mentions
+                .filter((mention) => mention.email)
+                .map((mention) => [mention.email, mention])
+        ).values()
+    ];
+
+    if (recipients.length === 0) {
+        return {
+            prepared: 0,
+            missingEmails
+        };
+    }
+
+    const tableId = valeurTexte(
+        W.opt.mentionnotificationtable ||
+        'Notifications_Kanban'
+    ).trim();
+
+    if (!tableId) {
+        throw new Error(
+            'Renseignez la table des notifications dans la configuration du widget.'
+        );
+    }
+
+    const todo = trouverRecord(rowId);
+    const taskName =
+        valeurTexte(todo?.DESCRIPTION).trim() ||
+        `Tâche #${Number(rowId)}`;
+
+    const notificationTable = grist.getTable(tableId);
+
+    const records = recipients.map((recipient) => ({
+        fields: {
+            Destinataire_email: recipient.email,
+            Destinataire_nom: recipient.name,
+            Tache_id: Number(rowId),
+            Tache: taskName,
+            Auteur: comment.author,
+            Commentaire: comment.text,
+            Commentaire_id: comment.id,
+            Cree_le: new Date().toISOString()
+        }
+    }));
+
+    try {
+        await notificationTable.create(records);
+    } catch (error) {
+        throw new Error(
+            `Le commentaire est enregistré, mais la table « ${tableId} » ` +
+            'est absente ou mal configurée. Consultez le guide des notifications.'
+        );
+    }
+
+    return {
+        prepared: records.length,
+        missingEmails
+    };
 }
 
 async function supprimerCommentaire(rowId, commentId, event) {
@@ -2052,46 +3035,83 @@ async function supprimerCommentaire(rowId, commentId, event) {
     event?.stopPropagation();
 
     try {
-        afficherStatutSection('comments', rowId, 'saving', 'Suppression…');
-        await mettreAJourCommentairesEnFile(rowId, (comments) => comments.filter((comment) => comment.id !== commentId));
+        afficherStatutSection(
+            'comments',
+            rowId,
+            'saving',
+            'Suppression…'
+        );
+
+        await mettreAJourCommentairesEnFile(
+            rowId,
+            (comments) =>
+                comments.filter(
+                    (comment) => comment.id !== commentId
+                )
+        );
+
         rafraichirCommentaires(rowId);
-        afficherStatutSection('comments', rowId, 'saved', 'Commentaire supprimé.');
+        afficherStatutSection(
+            'comments',
+            rowId,
+            'saved',
+            'Commentaire supprimé.'
+        );
     } catch (error) {
-        console.error('Erreur pendant la suppression du commentaire :', error);
-        afficherStatutSection('comments', rowId, 'error', 'Impossible de supprimer le commentaire.');
+        console.error(
+            'Erreur pendant la suppression du commentaire :',
+            error
+        );
+
+        afficherStatutSection(
+            'comments',
+            rowId,
+            'error',
+            'Impossible de supprimer le commentaire.'
+        );
     }
 }
 
 async function mettreAJourCommentairesEnFile(rowId, transform) {
     const resolvedRowId = Number(rowId);
-    const previous = COMMENT_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const previous =
+        COMMENT_SAVE_QUEUES.get(resolvedRowId) ||
+        Promise.resolve();
 
     const next = previous
         .catch(() => undefined)
         .then(async () => {
             const record = trouverRecord(resolvedRowId);
-            const current = parserCommentaires(record?.COMMENTAIRES);
+            const current = parserCommentaires(
+                record?.COMMENTAIRES
+            );
             const updated = transform(current);
             const serialized = JSON.stringify(updated);
-
             const tracking = construireChampsSuivi();
-            await W.updateRecords(W.formatRecord(resolvedRowId, {
-                COMMENTAIRES: serialized,
-                ...tracking
-            }));
 
-            // Une formule d’initialisation sur la colonne Commentaires remplace
-            // COMMENT_AUTHOR_PLACEHOLDER par user.Name au moment de l’écriture.
-            const refreshed = await rechargerCommentairesDepuisGrist(resolvedRowId);
+            await W.updateRecords(
+                W.formatRecord(resolvedRowId, {
+                    COMMENTAIRES: serialized,
+                    ...tracking
+                })
+            );
+
+            const refreshed =
+                await rechargerCommentairesDepuisGrist(
+                    resolvedRowId
+                );
 
             if (record) {
-                record.COMMENTAIRES = JSON.stringify(refreshed);
+                record.COMMENTAIRES =
+                    JSON.stringify(refreshed);
             }
 
             return refreshed;
         })
         .finally(() => {
-            if (COMMENT_SAVE_QUEUES.get(resolvedRowId) === next) {
+            if (
+                COMMENT_SAVE_QUEUES.get(resolvedRowId) === next
+            ) {
                 COMMENT_SAVE_QUEUES.delete(resolvedRowId);
             }
         });
@@ -2102,11 +3122,17 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
 
 async function rechargerCommentairesDepuisGrist(rowId) {
     const actualColumnId = W.map?.COMMENTAIRES;
+
     if (!actualColumnId || Array.isArray(actualColumnId)) {
-        throw new Error('La colonne Commentaires n’est pas correctement mappée.');
+        throw new Error(
+            'La colonne Commentaires n’est pas correctement mappée.'
+        );
     }
 
-    const rawValue = await lireValeurBruteCellule(rowId, actualColumnId);
+    const rawValue = await lireValeurBruteCellule(
+        rowId,
+        actualColumnId
+    );
     const comments = parserCommentaires(rawValue);
     const record = trouverRecord(rowId);
 
@@ -2119,16 +3145,25 @@ async function rechargerCommentairesDepuisGrist(rowId) {
 
 function rafraichirCommentaires(rowId) {
     const record = trouverRecord(rowId);
-    const comments = parserCommentaires(record?.COMMENTAIRES);
-    const list = document.getElementById(`comments-list-${Number(rowId)}`);
+    const comments = parserCommentaires(
+        record?.COMMENTAIRES
+    );
+    const list = document.getElementById(
+        `comments-list-${Number(rowId)}`
+    );
     const section = list?.closest('.comments-section');
 
     if (list) {
-        list.innerHTML = construireListeCommentaires(comments, rowId);
+        list.innerHTML =
+            construireListeCommentaires(comments, rowId);
     }
-    const subtitle = section?.querySelector('.detail-section-header p');
+
+    const subtitle =
+        section?.querySelector('.detail-section-header p');
+
     if (subtitle) {
-        subtitle.textContent = `${comments.length} commentaire(s)`;
+        subtitle.textContent =
+            `${comments.length} commentaire(s)`;
     }
 }
 
@@ -2241,7 +3276,23 @@ function fermerPopup() {
         return;
     }
 
-    trouverCarteParId(popup.dataset.currentTodo)?.classList.remove('active');
+    const dirtyNotes = popup.querySelector(
+        '.notes-field.is-editing.is-dirty'
+    );
+
+    if (
+        dirtyNotes &&
+        !window.confirm(
+            'Les modifications des notes ne sont pas enregistrées. Fermer quand même ?'
+        )
+    ) {
+        return;
+    }
+
+    trouverCarteParId(
+        popup.dataset.currentTodo
+    )?.classList.remove('active');
+
     popup.classList.remove('visible');
     fermerTousLesMenusMultiples();
 }
@@ -2462,6 +3513,13 @@ function valeurTexte(value) {
     return String(value);
 }
 
+function normaliserEmail(value) {
+    const email = valeurTexte(value).trim().toLowerCase();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        ? email
+        : '';
+}
+
 function construireInfoCreation(todo) {
     const lines = [];
 
@@ -2637,8 +3695,21 @@ window.previsualiserCouleur = previsualiserCouleur;
 window.mettreAJourCouleur = mettreAJourCouleur;
 window.reinitialiserCouleur = reinitialiserCouleur;
 
+window.activerEditionNotes = activerEditionNotes;
+window.annulerEditionNotes = annulerEditionNotes;
+window.enregistrerEtFermerNotes = enregistrerEtFermerNotes;
+window.appliquerFormatBlocNotes = appliquerFormatBlocNotes;
 window.appliquerCommandeNotes = appliquerCommandeNotes;
+window.appliquerBaliseSelectionNotes = appliquerBaliseSelectionNotes;
 window.creerLienNotes = creerLienNotes;
 window.nettoyerCollageNotes = nettoyerCollageNotes;
-window.planifierEnregistrementNotes = planifierEnregistrementNotes;
-window.enregistrerNotesImmediatement = enregistrerNotesImmediatement;
+window.marquerNotesModifiees = marquerNotesModifiees;
+window.mettreAJourEtatBarreNotes = mettreAJourEtatBarreNotes;
+window.gererRaccourcisNotes = gererRaccourcisNotes;
+
+window.ouvrirMenuMentions = ouvrirMenuMentions;
+window.fermerMenuMentions = fermerMenuMentions;
+window.gererSaisieMention = gererSaisieMention;
+window.gererTouchesMention = gererTouchesMention;
+window.selectionnerMentionCommentaire = selectionnerMentionCommentaire;
+window.retirerMentionCommentaire = retirerMentionCommentaire;
