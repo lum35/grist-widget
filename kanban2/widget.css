@@ -1,4 +1,4 @@
-/* ========== KANBAN2 — VERSION 7 ========== */
+/* ========== KANBAN2 — VERSION 8.1 ========== */
 
 :root {
     --border-radius: 6px;
@@ -4626,3 +4626,439 @@ label {
     }
 }
 
+
+
+/* ========================================================================== */
+/* KANBAN2 V8.1 — CORRECTIFS UX                                               */
+/* ========================================================================== */
+
+:root {
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea,
+summary {
+    font-family: var(--font-ui);
+}
+
+.task-detail-title {
+    font-size: clamp(1.45rem, 2.7vw, 2rem);
+    font-weight: 700;
+    letter-spacing: -0.018em;
+    line-height: 1.18;
+}
+
+.task-status-pill,
+.task-completed-pill,
+.task-type-caption,
+.task-panel-heading strong,
+.task-column-heading strong,
+.notes-heading .field-label,
+.comments-section .detail-section-header h3,
+.resource-section-header h3,
+.checklist-title-input {
+    font-weight: 700;
+}
+
+.task-quick-button > strong,
+.task-property-heading,
+.task-property-content,
+.comment-composer-footer > button {
+    font-weight: 600;
+}
+
+/* Cartes droites tant que l'option n'est pas activée explicitement. */
+.carte.norotate,
+.carte.norotate:hover,
+.carte.norotate.active {
+    --rotation: 0deg;
+}
+
+/* Aucun voile sombre derrière les menus. */
+.task-panel-backdrop {
+    display: none !important;
+}
+
+.task-action-layer,
+.task-action-panels {
+    z-index: 4100;
+}
+
+.task-action-panel {
+    z-index: 4200;
+    box-shadow:
+        0 18px 48px rgba(15, 23, 42, 0.22),
+        0 0 0 1px rgba(148, 163, 184, 0.08);
+}
+
+/* Équipe sur les cartes : une pile unique, sans étoile ni fond séparé. */
+.card-people,
+.card-people-group,
+.card-responsables,
+.card-membres {
+    display: none !important;
+}
+
+.card-team-stack {
+    display: flex;
+    min-height: 30px;
+    padding-right: 0.1rem;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.card-team-stack .responsable-avatar {
+    margin-left: -7px;
+}
+
+.card-team-stack .responsable-avatar:first-child {
+    margin-left: 0;
+}
+
+.responsable-avatar {
+    overflow: hidden;
+}
+
+.responsable-avatar-principal {
+    border-color: #f59e0b;
+    box-shadow:
+        0 0 0 2px rgba(245, 158, 11, 0.2),
+        0 1px 3px rgba(15, 23, 42, 0.18);
+}
+
+.responsable-avatar-principal::after {
+    display: none !important;
+    content: none !important;
+}
+
+.card-team-more {
+    display: inline-flex;
+    width: 27px;
+    height: 27px;
+    margin-left: -6px;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgba(255, 255, 255, 0.88);
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: var(--background-row);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
+    font-size: 0.61rem;
+    font-weight: 700;
+}
+
+/* Résumé équipe dans la fiche. */
+.team-summary-list {
+    display: flex;
+    min-width: 0;
+    gap: 0.38rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.team-person-chip {
+    display: inline-flex;
+    max-width: 100%;
+    min-height: 30px;
+    padding: 0.18rem 0.5rem 0.18rem 0.24rem;
+    gap: 0.36rem;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-color);
+    background: var(--background-field);
+    font-size: 0.72rem;
+}
+
+.team-person-chip-responsable {
+    border-color: rgba(245, 158, 11, 0.48);
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.team-person-chip-avatar {
+    display: inline-flex;
+    width: 23px;
+    height: 23px;
+    flex: 0 0 23px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.54rem;
+    font-weight: 750;
+}
+
+.team-person-chip-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-person-chip small {
+    padding: 0.1rem 0.32rem;
+    border-radius: 999px;
+    color: #92400e;
+    background: rgba(245, 158, 11, 0.18);
+    font-size: 0.57rem;
+    font-weight: 700;
+}
+
+.team-inline-add,
+.task-label-inline-add {
+    display: inline-flex;
+    width: 29px;
+    height: 29px;
+    flex: 0 0 29px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.team-inline-add:hover,
+.task-label-inline-add:hover {
+    border-color: var(--focus);
+    color: var(--focus);
+    background: rgba(37, 99, 235, 0.07);
+}
+
+/* Panneau équipe unifié. */
+.task-people-panel {
+    width: min(680px, 100%);
+}
+
+.task-people-legend {
+    display: grid;
+    padding: 0.2rem 0.55rem 0.35rem;
+    grid-template-columns: minmax(180px, 1fr) 104px 126px;
+    gap: 0.45rem;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    font-weight: 650;
+    text-align: center;
+}
+
+.task-people-legend > span:first-child {
+    text-align: left;
+}
+
+.task-people-roster {
+    display: grid;
+    gap: 0.38rem;
+}
+
+.task-person-row {
+    display: grid;
+    min-width: 0;
+    padding: 0.5rem 0.55rem;
+    grid-template-columns: minmax(180px, 1fr) 104px 126px;
+    gap: 0.45rem;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: color-mix(
+        in srgb,
+        var(--background-field) 92%,
+        var(--background-hover)
+    );
+}
+
+.task-person-row:hover {
+    border-color: var(--border-color);
+    background: var(--background-field);
+}
+
+.task-person-identity {
+    display: flex;
+    min-width: 0;
+    gap: 0.55rem;
+    align-items: center;
+}
+
+.task-person-avatar {
+    display: inline-flex;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.64rem;
+    font-weight: 750;
+}
+
+.task-person-copy {
+    display: grid;
+    min-width: 0;
+    gap: 0.05rem;
+}
+
+.task-person-copy strong,
+.task-person-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-person-copy strong {
+    font-size: 0.78rem;
+    font-weight: 650;
+}
+
+.task-person-copy small {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+}
+
+.person-role-toggle {
+    position: relative;
+    display: block;
+    min-width: 0;
+}
+
+.person-role-toggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.person-role-toggle span {
+    display: inline-flex;
+    width: 100%;
+    min-height: 32px;
+    padding: 0.35rem 0.48rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    color: var(--text-muted);
+    background: var(--background-row);
+    cursor: pointer;
+    font-size: 0.67rem;
+    font-weight: 650;
+    text-align: center;
+}
+
+.person-role-toggle input:checked + span {
+    border-color: rgba(37, 99, 235, 0.55);
+    color: #1d4ed8;
+    background: rgba(37, 99, 235, 0.11);
+}
+
+.person-role-toggle-responsable input:checked + span {
+    border-color: rgba(245, 158, 11, 0.58);
+    color: #92400e;
+    background: rgba(245, 158, 11, 0.13);
+}
+
+.person-role-toggle input:disabled + span {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* Le + reste juste après les étiquettes déjà présentes. */
+.task-label-chips {
+    display: flex;
+    min-width: 0;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Sélecteur de fichier explicite. */
+.resource-file-drop {
+    position: relative;
+}
+
+.resource-file-button {
+    min-height: 36px;
+    margin-top: 0.45rem;
+    padding: 0.48rem 0.68rem;
+    border: 1px solid var(--focus);
+    border-radius: 7px;
+    color: #fff;
+    background: var(--focus);
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 650;
+}
+
+.resource-file-button:hover:not(:disabled) {
+    filter: brightness(1.05);
+}
+
+.resource-file-button:disabled {
+    cursor: wait;
+    opacity: 0.58;
+}
+
+.resource-file-input[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 720px) {
+    .task-action-panel {
+        z-index: 5200;
+    }
+
+    .task-people-legend {
+        display: none;
+    }
+
+    .task-person-row {
+        grid-template-columns: minmax(0, 1fr) repeat(2, minmax(92px, auto));
+    }
+
+    .task-person-identity {
+        grid-column: 1 / -1;
+        padding-bottom: 0.2rem;
+    }
+
+    .person-role-toggle {
+        grid-row: 2;
+    }
+
+    .person-role-toggle:first-of-type {
+        grid-column: 2;
+    }
+
+    .person-role-toggle-responsable {
+        grid-column: 3;
+    }
+}
+
+@media (max-width: 480px) {
+    .task-person-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .task-person-identity {
+        grid-column: 1 / -1;
+    }
+
+    .person-role-toggle:first-of-type {
+        grid-column: 1;
+    }
+
+    .person-role-toggle-responsable {
+        grid-column: 2;
+    }
+
+    .team-person-chip {
+        max-width: calc(100vw - 4rem);
+    }
+}

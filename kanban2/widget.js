@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8 ==========
-// Fiche responsive à double colonne, actions contextuelles, détails compacts, checklists, notes et commentaires.
+// ========== KANBAN2 — VERSION 8.1 ==========
+// Correctifs UX : typographie harmonisée, panneaux sans voile sombre, équipe unifiée et upload renforcé.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -59,7 +59,7 @@ window.addEventListener('load', async () => {
                 }
             ),
 
-            WidgetSDK.newItem('rotation', true, 'Inclinaison des cartes', 'Donner un léger effet post-it aux cartes.', '2 — Affichage des cartes'),
+            WidgetSDK.newItem('cardrotation', false, 'Inclinaison des cartes', 'Incliner légèrement les cartes. Désactivé par défaut.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('compact', false, 'Mode compact', 'Réduire les espacements et la hauteur des cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('showlabels', true, 'Afficher les étiquettes', 'Afficher les étiquettes colorées sur les cartes.', '2 — Affichage des cartes'),
             WidgetSDK.newItem('showmembers', true, 'Afficher les membres', 'Afficher les bulles d’initiales des membres sur les cartes.', '2 — Affichage des cartes'),
@@ -657,7 +657,8 @@ function creerColonneKanban(status, index) {
 
 function creerCarteTodo(todo) {
     const card = document.createElement('article');
-    card.className = `carte${W.opt.rotation ? '' : ' norotate'}${W.opt.compact ? ' compact' : ''}`;
+    const rotateCards = W.opt.cardrotation === true;
+    card.className = `carte${rotateCards ? '' : ' norotate'}${W.opt.compact ? ' compact' : ''}`;
     card.dataset.todoId = String(todo.id);
     card.dataset.lastUpdate = serialiserDate(todo.DERNIERE_MISE_A_JOUR);
     card.dataset.deadline = serialiserDate(todo.DEADLINE);
@@ -669,12 +670,11 @@ function creerCarteTodo(todo) {
     const membres = obtenirMembres(todo);
     const responsables = obtenirResponsables(todo);
     const etiquettes = obtenirEtiquettes(todo);
-    const checklists = parserChecklists(todo.CHECKLIST);
-    const checklistItems = checklists.flatMap((checklist) => checklist.items);
-    const checklistDone = checklistItems.filter((item) => item.done).length;
-    const links = parserLiens(todo.LIENS);
+    const checklist = parserChecklists(todo.CHECKLIST)
+        .flatMap((group) => group.items || []);
+    const checklistDone = checklist.filter((item) => item.done).length;
     const attachmentCount = normaliserIdsListe(todo.PIECES_JOINTES).length;
-    const resourceCount = attachmentCount + links.length;
+    const linkCount = parserLiens(todo.LIENS).length;
     const commentCount = parserCommentaires(todo.COMMENTAIRES).length;
 
     const description = todo.DESCRIPTION_DISPLAY
@@ -685,13 +685,7 @@ function creerCarteTodo(todo) {
         .map((item) => construireBadgeEtiquette(item))
         .join('');
 
-    const membresHtml = membres
-        .map((person) => construireAvatarCarte(person, 'member'))
-        .join('');
-
-    const responsablesHtml = responsables
-        .map((person) => construireAvatarCarte(person, 'responsable'))
-        .join('');
+    const teamHtml = construireEquipeCarte(membres, responsables);
 
     const columnOption = getColumnOptionByStatus(todo.STATUT);
     const deadlineTimestamp = toTimestamp(todo.DEADLINE);
@@ -705,22 +699,14 @@ function creerCarteTodo(todo) {
     const showDeadline = W.opt.showdeadline !== false;
     const showIndicators = W.opt.showindicators !== false;
     const showChecklistProgress = W.opt.showchecklistprogress !== false;
-
-    const peopleHtml = `
-        ${(showResponsables && responsables.length)
-            ? `<div class="card-people-group card-responsables" aria-label="Responsables">${responsablesHtml}</div>`
-            : ''}
-        ${(showMembers && membres.length)
-            ? `<div class="card-people-group card-membres" aria-label="Membres">${membresHtml}</div>`
-            : ''}
-    `;
+    const showTeam = (showMembers || showResponsables) && teamHtml;
 
     const indicatorsHtml = `
-        ${(showChecklistProgress && checklistItems.length)
-            ? `<span title="${checklistDone} élément(s) terminé(s) sur ${checklistItems.length}">☑ ${checklistDone}/${checklistItems.length}</span>`
+        ${(showChecklistProgress && checklist.length)
+            ? `<span title="${checklistDone} élément(s) terminé(s) sur ${checklist.length}">☑ ${checklistDone}/${checklist.length}</span>`
             : ''}
-        ${(showIndicators && resourceCount)
-            ? `<span title="${resourceCount} ressource(s)">📎 ${resourceCount}</span>`
+        ${(showIndicators && (attachmentCount + linkCount))
+            ? `<span title="${attachmentCount} fichier(s) et ${linkCount} lien(s)">📎 ${attachmentCount + linkCount}</span>`
             : ''}
         ${(showIndicators && commentCount)
             ? `<span title="${commentCount} commentaire(s)">💬 ${commentCount}</span>`
@@ -731,10 +717,10 @@ function creerCarteTodo(todo) {
         ${(showLabels && labelsHtml) ? `<div class="etiquettes-list">${labelsHtml}</div>` : ''}
         <div class="description">${description}</div>
         ${(showDeadline && deadline) ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>` : ''}
-        ${((showMembers && membres.length) || (showResponsables && responsables.length) || indicatorsHtml.trim())
+        ${((showTeam) || indicatorsHtml.trim())
             ? `<div class="card-footer">
                 <div class="card-indicators">${indicatorsHtml}</div>
-                <div class="card-people">${peopleHtml}</div>
+                ${showTeam ? `<div class="card-team-stack" aria-label="Équipe de la carte">${teamHtml}</div>` : ''}
                </div>`
             : ''}
         ${columnOption?.isdone
@@ -761,11 +747,38 @@ function creerCarteTodo(todo) {
     return card;
 }
 
-function construireAvatarCarte(person, role = 'member') {
-    const roleLabel = role === 'responsable' ? 'Responsable' : 'Membre';
+function construireEquipeCarte(membres, responsables) {
+    const responsibleIds = new Set(
+        responsables
+            .map((person) => Number(person.id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+    );
+
+    const merged = [
+        ...responsables.map((person) => ({...person, role: 'responsable'})),
+        ...membres
+            .filter((person) => !responsibleIds.has(Number(person.id)))
+            .map((person) => ({...person, role: 'membre'}))
+    ];
+
+    const visible = merged.slice(0, 6);
+    const remaining = merged.length - visible.length;
+
+    return [
+        ...visible.map((person) => construireAvatarCarte(person, person.role)),
+        remaining > 0
+            ? `<span class="card-team-more" title="${remaining} autre(s) membre(s)">+${remaining}</span>`
+            : ''
+    ].join('');
+}
+
+function construireAvatarCarte(person, role = 'membre') {
+    const isResponsible = role === 'responsable';
+    const roleLabel = isResponsible ? 'Responsable' : 'Membre';
+
     return `
         <span
-            class="responsable-avatar ${role === 'responsable' ? 'responsable-avatar-principal' : 'membre-avatar'}"
+            class="responsable-avatar ${isResponsible ? 'responsable-avatar-principal' : 'membre-avatar'}"
             style="background:${echapperAttribut(person.avatarColor)}"
             title="${echapperAttribut(`${roleLabel} : ${person.label}`)}"
             aria-label="${echapperAttribut(`${roleLabel} : ${person.label}`)}"
@@ -1197,13 +1210,6 @@ function construirePanneauxActionsFiche(todo) {
 
     return `
         <div class="task-action-layer">
-            <button
-                type="button"
-                class="task-panel-backdrop"
-                onclick="fermerPanneauxFiche(event)"
-                aria-label="Fermer le panneau"
-                hidden
-            ></button>
             <div class="task-action-panels">${panels}</div>
         </div>
     `;
@@ -1335,63 +1341,97 @@ function construirePanneauNouvelleChecklist(todo) {
 }
 
 function construirePanneauPersonnesFiche(todo) {
-    const parts = [];
-
-    if (W.map?.MEMBRES) {
-        parts.push(construireSelecteurPersonnesPanneau(
-            todo,
-            'MEMBRES',
-            'Membres de la carte',
-            obtenirIdsMembres(todo),
-            W.col.MEMBRES.getIsFormula()
-        ));
-    }
-    if (W.map?.RESPONSABLE) {
-        parts.push(construireSelecteurPersonnesPanneau(
-            todo,
-            'RESPONSABLE',
-            'Responsables de la carte',
-            obtenirIdsResponsables(todo),
-            W.col.RESPONSABLE.getIsFormula()
-        ));
-    }
+    const selectedMembers = new Set(obtenirIdsMembres(todo));
+    const selectedResponsables = new Set(obtenirIdsResponsables(todo));
+    const membersDisabled = !W.map?.MEMBRES || W.col.MEMBRES.getIsFormula();
+    const responsablesDisabled = !W.map?.RESPONSABLE || W.col.RESPONSABLE.getIsFormula();
 
     return `
-        <section class="task-action-panel" data-panel="people" hidden>
+        <section class="task-action-panel task-people-panel" data-panel="people" hidden>
             <div class="task-panel-heading">
-                <div><strong>Membres et responsables</strong><span>Définissez qui participe et qui pilote la carte</span></div>
+                <div>
+                    <strong>Équipe de la carte</strong>
+                    <span>Attribuez un rôle à chaque personne sans dupliquer les listes</span>
+                </div>
                 <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
             </div>
+
             <div class="task-panel-search">
-                <input type="search" placeholder="Rechercher une personne…" oninput="filtrerPanneauFiche(this)">
+                <input
+                    type="search"
+                    placeholder="Rechercher une personne…"
+                    oninput="filtrerPanneauFiche(this)"
+                >
             </div>
-            <div class="task-people-editors">${parts.join('')}</div>
+
+            <div class="task-people-legend" aria-hidden="true">
+                <span>Personne</span>
+                <span>Membre</span>
+                <span>Responsable</span>
+            </div>
+
+            <div class="task-people-roster">
+                ${RESPONSABLES.map((person) => `
+                    <div
+                        class="task-person-row"
+                        data-search="${echapperAttribut(
+                            `${person.label} ${person.email || ''}`
+                                .toLocaleLowerCase(W.cultureFull)
+                        )}"
+                    >
+                        <div class="task-person-identity">
+                            <span
+                                class="task-person-avatar"
+                                style="background:${echapperAttribut(person.avatarColor)}"
+                            >${echapperHtml(person.initials)}</span>
+                            <span class="task-person-copy">
+                                <strong>${echapperHtml(person.label)}</strong>
+                                ${person.email
+                                    ? `<small>${echapperHtml(person.email)}</small>`
+                                    : ''
+                                }
+                            </span>
+                        </div>
+
+                        <label class="person-role-toggle">
+                            <input
+                                type="checkbox"
+                                data-role="MEMBRES"
+                                value="${person.id}"
+                                ${selectedMembers.has(person.id) ? 'checked' : ''}
+                                onchange="enregistrerRolePersonneDepuisPanneau(
+                                    ${Number(todo.id)},
+                                    'MEMBRES',
+                                    this.closest('.task-action-panel'),
+                                    event
+                                )"
+                                ${membersDisabled ? 'disabled' : ''}
+                            >
+                            <span>Membre</span>
+                        </label>
+
+                        <label class="person-role-toggle person-role-toggle-responsable">
+                            <input
+                                type="checkbox"
+                                data-role="RESPONSABLE"
+                                value="${person.id}"
+                                ${selectedResponsables.has(person.id) ? 'checked' : ''}
+                                onchange="enregistrerRolePersonneDepuisPanneau(
+                                    ${Number(todo.id)},
+                                    'RESPONSABLE',
+                                    this.closest('.task-action-panel'),
+                                    event
+                                )"
+                                ${responsablesDisabled ? 'disabled' : ''}
+                            >
+                            <span>Responsable</span>
+                        </label>
+                    </div>
+                `).join('') || '<div class="section-empty">Aucune personne disponible dans la table Membres.</div>'}
+            </div>
+
             <div class="task-panel-status section-status" aria-live="polite"></div>
         </section>
-    `;
-}
-
-function construireSelecteurPersonnesPanneau(todo, mappingKey, title, selectedIds, disabled) {
-    const selected = new Set(selectedIds);
-    return `
-        <div class="task-people-editor" data-mapping-key="${echapperAttribut(mappingKey)}" data-row-id="${Number(todo.id)}">
-            <h4>${echapperHtml(title)}</h4>
-            <div class="task-panel-options">
-                ${RESPONSABLES.map((person) => `
-                    <label class="task-check-option task-person-option" data-search="${echapperAttribut(`${person.label} ${person.email || ''}`.toLocaleLowerCase(W.cultureFull))}">
-                        <input
-                            type="checkbox"
-                            value="${person.id}"
-                            ${selected.has(person.id) ? 'checked' : ''}
-                            onchange="enregistrerPersonnesDepuisPanneau(${Number(todo.id)}, '${echapperJs(mappingKey)}', this.closest('.task-people-editor'), event)"
-                            ${disabled ? 'disabled' : ''}
-                        >
-                        <span class="responsable-option-avatar" style="background:${echapperAttribut(person.avatarColor)}">${echapperHtml(person.initials)}</span>
-                        <span class="task-person-name">${echapperHtml(person.label)}</span>
-                    </label>
-                `).join('') || '<div class="section-empty">Aucun membre disponible.</div>'}
-            </div>
-        </div>
     `;
 }
 
@@ -1408,16 +1448,23 @@ function construirePanneauRessourcesFiche(todo) {
 
             <div class="resource-add-tabs">
                 ${canFiles ? `
-                    <label class="resource-file-drop">
+                    <div class="resource-file-drop">
                         <span>📤</span>
                         <strong>Ajouter un fichier</strong>
                         <small>Image, PDF, document… 50 Mo maximum</small>
+                        <button
+                            type="button"
+                            class="resource-file-button"
+                            onclick="declencherSelecteurPiecesJointes(this, event)"
+                        >Choisir un ou plusieurs fichiers</button>
                         <input
                             type="file"
+                            class="resource-file-input"
                             multiple
+                            hidden
                             onchange="ajouterPiecesJointes(${Number(todo.id)}, this, event)"
                         >
-                    </label>
+                    </div>
                 ` : ''}
 
                 ${canLinks ? `
@@ -1532,17 +1579,36 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
         <section class="task-property-card task-label-property">
             <div class="task-property-heading">
                 <span>Étiquettes</span>
-                <button type="button" onclick="ouvrirPanneauFiche('labels', event, true)" aria-label="Ajouter une étiquette">+</button>
             </div>
             <div class="task-property-content task-label-chips">
                 ${etiquettes.map((item) => `
-                    <span class="etiquette-active" style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}">
+                    <span
+                        class="etiquette-active"
+                        style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
+                    >
                         <span>${echapperHtml(item.label)}</span>
                         ${W.col.ETIQUETTES.getIsFormula() ? '' : `
-                            <button type="button" onclick="retirerEtiquetteFiche(${Number(todo.id)}, ${Number(item.id)}, event)" aria-label="Retirer ${echapperAttribut(item.label)}">×</button>
+                            <button
+                                type="button"
+                                onclick="retirerEtiquetteFiche(
+                                    ${Number(todo.id)},
+                                    ${Number(item.id)},
+                                    event
+                                )"
+                                aria-label="Retirer ${echapperAttribut(item.label)}"
+                            >×</button>
                         `}
                     </span>
                 `).join('')}
+                ${W.col.ETIQUETTES.getIsFormula() ? '' : `
+                    <button
+                        type="button"
+                        class="task-label-inline-add"
+                        onclick="ouvrirPanneauFiche('labels', event, true)"
+                        aria-label="Ajouter une étiquette"
+                        title="Ajouter une étiquette"
+                    >+</button>
+                `}
             </div>
         </section>
     `;
@@ -1573,17 +1639,39 @@ function construireResumeDateFiche(todo) {
 }
 
 function construireResumePersonnesFiche(todo, membres, responsables) {
-    const renderGroup = (title, people, role) => people.length ? `
-        <div class="task-people-summary-group">
-            <div class="task-people-summary-label">
-                <span>${echapperHtml(title)}</span>
-                <small>${people.length}</small>
-            </div>
-            <div class="task-people-summary-avatars">
-                ${people.map((person) => construireAvatarCarte(person, role)).join('')}
-            </div>
-        </div>
-    ` : '';
+    const responsibleIds = new Set(
+        responsables.map((person) => Number(person.id))
+    );
+    const secondaryMembers = membres.filter(
+        (person) => !responsibleIds.has(Number(person.id))
+    );
+
+    const responsableChips = responsables.map((person) => `
+        <span
+            class="team-person-chip team-person-chip-responsable"
+            title="Responsable : ${echapperAttribut(person.label)}"
+        >
+            <span
+                class="team-person-chip-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+            >${echapperHtml(person.initials)}</span>
+            <span class="team-person-chip-name">${echapperHtml(person.label)}</span>
+            <small>Responsable</small>
+        </span>
+    `).join('');
+
+    const memberChips = secondaryMembers.map((person) => `
+        <span
+            class="team-person-chip"
+            title="Membre : ${echapperAttribut(person.label)}"
+        >
+            <span
+                class="team-person-chip-avatar"
+                style="background:${echapperAttribut(person.avatarColor)}"
+            >${echapperHtml(person.initials)}</span>
+            <span class="team-person-chip-name">${echapperHtml(person.label)}</span>
+        </span>
+    `).join('');
 
     return `
         <section class="task-property-card task-people-property">
@@ -1592,12 +1680,18 @@ function construireResumePersonnesFiche(todo, membres, responsables) {
                 <button
                     type="button"
                     onclick="ouvrirPanneauFiche('people', event, true)"
-                    aria-label="Modifier les membres"
+                    aria-label="Modifier l’équipe"
                 >✎</button>
             </div>
-            <div class="task-property-content task-people-summary">
-                ${renderGroup('Responsables', responsables, 'responsable')}
-                ${renderGroup('Membres', membres, 'member')}
+            <div class="task-property-content team-summary-list">
+                ${responsableChips}
+                ${memberChips}
+                <button
+                    type="button"
+                    class="team-inline-add"
+                    onclick="ouvrirPanneauFiche('people', event, true)"
+                    aria-label="Ajouter un membre ou un responsable"
+                >+</button>
             </div>
         </section>
     `;
@@ -1648,9 +1742,6 @@ function ouvrirPanneauFiche(panelName, event, forceOpen = false) {
     if (!isAlreadyOpen || forceOpen) {
         target.hidden = false;
         popup.classList.add('task-panel-open');
-        const backdrop = popup.querySelector('.task-panel-backdrop');
-        if (backdrop) backdrop.hidden = false;
-
         const trigger = popup.querySelector(
             `[data-panel-trigger="${panelName}"]`
         );
@@ -1680,8 +1771,6 @@ function fermerPanneauxFiche(event) {
         button.setAttribute('aria-expanded', 'false');
     });
 
-    const backdrop = popup?.querySelector('.task-panel-backdrop');
-    if (backdrop) backdrop.hidden = true;
     popup?.classList.remove('task-panel-open');
 }
 
@@ -1772,11 +1861,20 @@ async function retirerEtiquetteFiche(rowId, labelId, event) {
     await rafraichirFicheCourante(rowId);
 }
 
-async function enregistrerPersonnesDepuisPanneau(rowId, mappingKey, editor, event) {
+async function enregistrerRolePersonneDepuisPanneau(
+    rowId,
+    mappingKey,
+    panel,
+    event
+) {
     event?.stopPropagation();
-    const panel = editor.closest('.task-action-panel');
+
     const status = panel?.querySelector('.task-panel-status');
-    const ids = Array.from(editor.querySelectorAll('input[type="checkbox"]:checked'))
+    const ids = Array.from(
+        panel?.querySelectorAll(
+            `input[data-role="${mappingKey}"]:checked`
+        ) || []
+    )
         .map((input) => Number(input.value))
         .filter((id) => RESPONSABLES_BY_ID.has(id));
 
@@ -1785,13 +1883,23 @@ async function enregistrerPersonnesDepuisPanneau(rowId, mappingKey, editor, even
             status.className = 'task-panel-status section-status saving';
             status.textContent = 'Enregistrement…';
         }
+
         await ecrireReferenceMultiple(rowId, mappingKey, ids);
         mettreAJourPersonnesLocales(rowId, mappingKey, ids);
+
+        if (status) {
+            status.className = 'task-panel-status section-status saved';
+            status.textContent = mappingKey === 'RESPONSABLE'
+                ? 'Responsables enregistrés.'
+                : 'Membres enregistrés.';
+        }
+
         await rafraichirFicheCourante(rowId, 'people');
     } catch (error) {
+        console.error('Impossible d’enregistrer le rôle :', error);
         if (status) {
             status.className = 'task-panel-status section-status error';
-            status.textContent = 'Impossible d’enregistrer les personnes.';
+            status.textContent = 'Impossible d’enregistrer ce rôle.';
         }
     }
 }
@@ -4128,63 +4236,189 @@ function construireCartePieceJointe(rowId, attachmentId, tokenInfo) {
     `;
 }
 
-async function ajouterPiecesJointes(rowId, input, event) {
+function declencherSelecteurPiecesJointes(button, event) {
+    event?.preventDefault();
     event?.stopPropagation();
 
+    const panel = button?.closest('.task-action-panel');
+    const input = panel?.querySelector('.resource-file-input');
+
+    if (!input || input.disabled) {
+        return;
+    }
+
+    input.click();
+}
+
+function extraireIdsPiecesJointesTeleversees(payload) {
+    const collected = [];
+
+    const visit = (value) => {
+        if (value === null || value === undefined) {
+            return;
+        }
+
+        if (typeof value === 'number' || typeof value === 'string') {
+            const number = Number(value);
+            if (Number.isInteger(number) && number > 0) {
+                collected.push(number);
+            }
+            return;
+        }
+
+        if (Array.isArray(value)) {
+            const start = value[0] === 'L' ? 1 : 0;
+            value.slice(start).forEach(visit);
+            return;
+        }
+
+        if (typeof value === 'object') {
+            [
+                'id',
+                'ids',
+                'attachmentId',
+                'attachmentIds',
+                'attachments',
+                'recordIds',
+                'result'
+            ].forEach((key) => {
+                if (Object.prototype.hasOwnProperty.call(value, key)) {
+                    visit(value[key]);
+                }
+            });
+        }
+    };
+
+    visit(payload);
+    return [...new Set(collected)];
+}
+
+async function ajouterPiecesJointes(rowId, input, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const panel = input?.closest('.task-action-panel');
+    const status = panel?.querySelector('.task-panel-status');
+    const chooseButton = panel?.querySelector('.resource-file-button');
     const files = Array.from(input?.files || []);
+
     if (files.length === 0) {
         return;
     }
 
-    const tooLarge = files.find((file) => file.size > MAX_ATTACHMENT_SIZE);
+    const setStatus = (state, message) => {
+        if (!status) return;
+        status.className =
+            `task-panel-status section-status${state ? ` ${state}` : ''}`;
+        status.textContent = message;
+    };
+
+    const tooLarge = files.find(
+        (file) => file.size > MAX_ATTACHMENT_SIZE
+    );
+
     if (tooLarge) {
-        afficherStatutSection('attachments', rowId, 'error', `${tooLarge.name} dépasse 50 Mo.`);
+        setStatus(
+            'error',
+            `${tooLarge.name} dépasse la limite de 50 Mo.`
+        );
         input.value = '';
         return;
     }
 
     input.disabled = true;
-    afficherStatutSection('attachments', rowId, 'saving', `Envoi de ${files.length} fichier(s)…`);
+    if (chooseButton) chooseButton.disabled = true;
+    setStatus(
+        'saving',
+        `Envoi de ${files.length} fichier(s)…`
+    );
 
     try {
-        const tokenInfo = await grist.docApi.getAccessToken({readOnly: false});
+        const tokenInfo = await obtenirTokenPiecesJointes(false);
         const formData = new FormData();
-        files.forEach((file) => formData.append('upload', file, file.name));
 
-        const response = await fetch(`${tokenInfo.baseUrl}/attachments?auth=${encodeURIComponent(tokenInfo.token)}`, {
-            method: 'POST',
-            body: formData,
-            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        files.forEach((file) => {
+            formData.append('upload', file, file.name);
         });
 
-        if (!response.ok) {
-            throw new Error(`Upload échoué (${response.status} ${response.statusText})`);
+        const uploadUrl =
+            `${tokenInfo.baseUrl}/attachments?auth=${encodeURIComponent(tokenInfo.token)}`;
+
+        const response = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            }
+        });
+
+        const responseText = await response.text();
+        let result = responseText;
+
+        if (responseText) {
+            try {
+                result = JSON.parse(responseText);
+            } catch (_) {
+                result = responseText;
+            }
         }
 
-        const result = await response.json();
-        const uploadedIds = normaliserIdsListe(result);
+        if (!response.ok) {
+            throw new Error(
+                `Upload refusé par Grist (${response.status}).`
+            );
+        }
+
+        const uploadedIds =
+            extraireIdsPiecesJointesTeleversees(result);
+
         if (uploadedIds.length === 0) {
-            throw new Error('Grist n’a retourné aucun identifiant de pièce jointe.');
+            throw new Error(
+                'Le fichier a été envoyé, mais aucun identifiant de pièce jointe n’a été retourné.'
+            );
         }
 
         const record = trouverRecord(rowId);
-        const existingIds = normaliserIdsListe(record?.PIECES_JOINTES);
-        const newIds = [...new Set([...existingIds, ...uploadedIds])];
-        await enregistrerPiecesJointesDansGrist(rowId, newIds);
+        const existingIds =
+            normaliserIdsListe(record?.PIECES_JOINTES);
+        const newIds = [
+            ...new Set([...existingIds, ...uploadedIds])
+        ];
+
+        await enregistrerPiecesJointesDansGrist(
+            rowId,
+            newIds
+        );
 
         if (record) {
             record.PIECES_JOINTES = [...newIds];
         }
 
         ATTACHMENT_META_LOADED = false;
+        ATTACHMENT_READ_TOKEN = null;
         await chargerMetaPiecesJointes(true);
-        await rafraichirFicheCourante(rowId, 'resources');
+
+        setStatus(
+            'saved',
+            `${uploadedIds.length} pièce(s) jointe(s) ajoutée(s).`
+        );
+
+        fermerPanneauxFiche();
+        await rafraichirFicheCourante(rowId);
     } catch (error) {
-        console.error('Erreur pendant l’ajout des pièces jointes :', error);
-        afficherStatutSection('attachments', rowId, 'error', error.message || 'Échec de l’envoi.');
+        console.error(
+            'Erreur pendant l’ajout des pièces jointes :',
+            error
+        );
+        setStatus(
+            'error',
+            error?.message || 'Échec de l’envoi.'
+        );
     } finally {
         input.value = '';
         input.disabled = false;
+        if (chooseButton) chooseButton.disabled = false;
     }
 }
 
@@ -5250,12 +5484,7 @@ document.addEventListener('click', (event) => {
         event.target.closest('.task-action-panel, .task-quick-button')
     );
     if (!insideActionUi) {
-        popup.querySelectorAll('.task-action-panel').forEach((panel) => {
-            panel.hidden = true;
-        });
-        popup.querySelectorAll('.task-quick-button').forEach((button) => {
-            button.classList.remove('active');
-        });
+        fermerPanneauxFiche();
     }
 
     const isInsidePopup = popup.contains(event.target);
@@ -5645,7 +5874,7 @@ window.mettreAJourTitreFiche = mettreAJourTitreFiche;
 window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
 window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;
 window.retirerEtiquetteFiche = retirerEtiquetteFiche;
-window.enregistrerPersonnesDepuisPanneau = enregistrerPersonnesDepuisPanneau;
+window.enregistrerRolePersonneDepuisPanneau = enregistrerRolePersonneDepuisPanneau;
 window.gererCreationChecklistClavier = gererCreationChecklistClavier;
 window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
 window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
@@ -5661,6 +5890,7 @@ window.filtrerOptionsChecklist = filtrerOptionsChecklist;
 
 window.ajouterLienFiche = ajouterLienFiche;
 window.retirerLienFiche = retirerLienFiche;
+window.declencherSelecteurPiecesJointes = declencherSelecteurPiecesJointes;
 window.ajouterPiecesJointes = ajouterPiecesJointes;
 window.retirerPieceJointe = retirerPieceJointe;
 window.ouvrirPieceJointe = ouvrirPieceJointe;
