@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 7 ==========
-// Fiche entièrement repensée, actions rapides, checklists titrées, membres, responsables, fichiers et liens.
+// ========== KANBAN2 — VERSION 8 ==========
+// Fiche responsive à double colonne, actions contextuelles, détails compacts, checklists, notes et commentaires.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -1021,64 +1021,86 @@ async function togglePopupTodo(todo) {
     const header = popup.querySelector('.popup-header');
     const closeButton = popup.querySelector('.bouton-fermer');
 
-    if (title) {
-        title.textContent = '';
-    }
+    if (title) title.textContent = '';
     if (header) {
         header.style.backgroundColor = '';
         header.style.color = '';
     }
-    if (closeButton) {
-        closeButton.style.color = '';
-    }
-    if (!content) {
-        return;
-    }
+    if (closeButton) closeButton.style.color = '';
+    if (!content) return;
 
     const notesDisabled = W.map?.NOTES ? W.col.NOTES.getIsFormula() : false;
     const descriptionDisabled = W.col.DESCRIPTION.getIsFormula();
-
     const dynamicContent = construireContenuDynamiqueFiche(todo);
     const metadata = W.opt.showmetadata !== false
         ? construireInfoCreation(todo)
         : '';
 
-    let form = `
-        <div class="task-detail-shell" data-row-id="${Number(todo.id)}">
-            <section class="task-title-zone">
-                <div class="task-title-meta">
-                    <span
-                        class="task-status-pill"
-                        style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}"
-                    >${echapperHtml(valeurTexte(todo.STATUT))}</span>
+    const notesHtml = W.map?.NOTES
+        ? construireEditeurNotes(todo, notesDisabled)
+        : '';
+    const commentsHtml = W.map?.COMMENTAIRES && W.opt.showcomments !== false
+        ? construireSectionCommentaires(todo)
+        : '';
+
+    const hasMainContent = Boolean(
+        notesHtml || dynamicContent.checklists || commentsHtml
+    );
+    const hasContext = Boolean(dynamicContent.context);
+
+    content.innerHTML = `
+        <div class="task-detail-shell task-detail-v8" data-row-id="${Number(todo.id)}">
+            <section class="task-hero">
+                <div class="task-hero-accent" aria-hidden="true"></div>
+                <div class="task-hero-copy">
+                    <div class="task-title-meta">
+                        <span
+                            class="task-status-pill"
+                            style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}"
+                        >${echapperHtml(valeurTexte(todo.STATUT))}</span>
+                        ${columnOption?.isdone
+                            ? '<span class="task-completed-pill">✓ Terminée</span>'
+                            : '<span class="task-type-caption">Carte de travail</span>'
+                        }
+                    </div>
+                    <textarea
+                        class="task-detail-title auto-expand"
+                        aria-label="Nom de la tâche"
+                        placeholder="Nom de la tâche"
+                        oninput="ajusterTextarea(this)"
+                        onchange="mettreAJourTitreFiche(${Number(todo.id)}, this, event)"
+                        ${descriptionDisabled ? 'disabled' : ''}
+                    >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
                 </div>
-                <textarea
-                    class="task-detail-title auto-expand"
-                    aria-label="Nom de la tâche"
-                    placeholder="Nom de la tâche"
-                    oninput="ajusterTextarea(this)"
-                    onchange="mettreAJourTitreFiche(${Number(todo.id)}, this, event)"
-                    ${descriptionDisabled ? 'disabled' : ''}
-                >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
             </section>
 
-            ${construireBarreActionsFiche(todo)}
+            <div class="task-actions-dock">
+                ${construireBarreActionsFiche(todo)}
+            </div>
             ${construirePanneauxActionsFiche(todo)}
 
-            ${dynamicContent
-                ? `<div id="task-dynamic-${Number(todo.id)}" class="task-dynamic-content">${dynamicContent}</div>`
-                : `<div id="task-dynamic-${Number(todo.id)}" class="task-dynamic-content" hidden></div>`
-            }
+            <div class="task-detail-layout${hasContext ? ' has-context' : ' no-context'}">
+                ${hasContext ? `
+                    <aside class="task-context-column" aria-label="Détails de la carte">
+                        <div class="task-column-heading">
+                            <span class="task-column-heading-icon">◫</span>
+                            <div>
+                                <strong>Détails</strong>
+                                <small>Informations actives de la carte</small>
+                            </div>
+                        </div>
+                        ${dynamicContent.context}
+                    </aside>
+                ` : ''}
 
-            ${W.map?.NOTES
-                ? construireEditeurNotes(todo, notesDisabled)
-                : ''
-            }
-
-            ${W.map?.COMMENTAIRES && W.opt.showcomments !== false
-                ? construireSectionCommentaires(todo)
-                : ''
-            }
+                ${hasMainContent ? `
+                    <main class="task-main-column">
+                        ${notesHtml}
+                        ${dynamicContent.checklists}
+                        ${commentsHtml}
+                    </main>
+                ` : ''}
+            </div>
 
             ${metadata
                 ? `<div class="task-detail-metadata">${metadata}</div>`
@@ -1097,9 +1119,9 @@ async function togglePopupTodo(todo) {
         </div>
     `;
 
-    content.innerHTML = form;
     content.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
     popup.classList.add('visible');
+    popup.classList.remove('task-panel-open');
 
     initialiserChecklistsSortables(content);
 
@@ -1128,6 +1150,7 @@ function construireBarreActionsFiche(todo) {
                 type="button"
                 class="task-quick-button"
                 data-panel-trigger="add"
+                aria-expanded="false"
                 onclick="ouvrirPanneauFiche('add', event)"
             ><span>＋</span><strong>Ajouter</strong></button>
 
@@ -1135,6 +1158,7 @@ function construireBarreActionsFiche(todo) {
                 type="button"
                 class="task-quick-button"
                 data-panel-trigger="checklist"
+                aria-expanded="false"
                 onclick="ouvrirPanneauFiche('checklist', event)"
                 ${canChecklist ? '' : 'disabled'}
             ><span>☑</span><strong>Checklist</strong></button>
@@ -1143,6 +1167,7 @@ function construireBarreActionsFiche(todo) {
                 type="button"
                 class="task-quick-button"
                 data-panel-trigger="people"
+                aria-expanded="false"
                 onclick="ouvrirPanneauFiche('people', event)"
                 ${canPeople ? '' : 'disabled'}
             ><span>👥</span><strong>Membres</strong></button>
@@ -1151,6 +1176,7 @@ function construireBarreActionsFiche(todo) {
                 type="button"
                 class="task-quick-button"
                 data-panel-trigger="resources"
+                aria-expanded="false"
                 onclick="ouvrirPanneauFiche('resources', event)"
                 ${canResources ? '' : 'disabled'}
             ><span>📎</span><strong>Pièce jointe</strong></button>
@@ -1169,7 +1195,18 @@ function construirePanneauxActionsFiche(todo) {
         W.map?.COULEUR ? construirePanneauCouleurFiche(todo) : ''
     ].filter(Boolean).join('');
 
-    return `<div class="task-action-panels">${panels}</div>`;
+    return `
+        <div class="task-action-layer">
+            <button
+                type="button"
+                class="task-panel-backdrop"
+                onclick="fermerPanneauxFiche(event)"
+                aria-label="Fermer le panneau"
+                hidden
+            ></button>
+            <div class="task-action-panels">${panels}</div>
+        </div>
+    `;
 }
 
 function construireMenuAjouterFiche(todo) {
@@ -1459,24 +1496,35 @@ function construireContenuDynamiqueFiche(todo) {
         properties.push(construireResumeDateFiche(todo));
     }
     if (membres.length > 0 || responsables.length > 0) {
-        properties.push(construireResumePersonnesFiche(todo, membres, responsables));
+        properties.push(
+            construireResumePersonnesFiche(todo, membres, responsables)
+        );
     }
     if (customColor) {
         properties.push(construireResumeCouleurFiche(todo, customColor));
     }
 
-    const blocks = [];
+    const contextBlocks = [];
     if (properties.length > 0) {
-        blocks.push(`<div class="task-property-grid">${properties.join('')}</div>`);
+        contextBlocks.push(
+            `<div class="task-property-grid">${properties.join('')}</div>`
+        );
     }
-    if (checklists.length > 0 && W.opt.showchecklist !== false) {
-        blocks.push(construireSectionsChecklists(todo, checklists));
-    }
-    if ((attachmentIds.length > 0 || links.length > 0) && W.opt.showattachments !== false) {
-        blocks.push(construireSectionRessources(todo, attachmentIds, links));
+    if (
+        (attachmentIds.length > 0 || links.length > 0) &&
+        W.opt.showattachments !== false
+    ) {
+        contextBlocks.push(
+            construireSectionRessources(todo, attachmentIds, links)
+        );
     }
 
-    return blocks.join('');
+    return {
+        context: contextBlocks.join(''),
+        checklists: checklists.length > 0 && W.opt.showchecklist !== false
+            ? construireSectionsChecklists(todo, checklists)
+            : ''
+    };
 }
 
 function construireResumeEtiquettesFiche(todo, etiquettes) {
@@ -1501,10 +1549,25 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
 }
 
 function construireResumeDateFiche(todo) {
+    const timestamp = toTimestamp(todo.DEADLINE);
+    const isLate = timestamp !== null && timestamp < Date.now();
+
     return `
-        <section class="task-property-card task-date-property" onclick="ouvrirPanneauFiche('date', event, true)">
-            <div class="task-property-heading"><span>Date limite</span><button type="button" aria-label="Modifier la date">✎</button></div>
-            <div class="task-property-content"><strong>📅 ${echapperHtml(formatDate(todo.DEADLINE))}</strong></div>
+        <section
+            class="task-property-card task-date-property${isLate ? ' is-late' : ''}"
+            onclick="ouvrirPanneauFiche('date', event, true)"
+        >
+            <div class="task-property-heading">
+                <span>Date limite</span>
+                <button type="button" aria-label="Modifier la date">✎</button>
+            </div>
+            <div class="task-property-content task-date-summary">
+                <span class="task-property-icon">📅</span>
+                <div>
+                    <strong>${echapperHtml(formatDate(todo.DEADLINE))}</strong>
+                    <small>${isLate ? 'Échéance dépassée' : 'Échéance planifiée'}</small>
+                </div>
+            </div>
         </section>
     `;
 }
@@ -1512,7 +1575,10 @@ function construireResumeDateFiche(todo) {
 function construireResumePersonnesFiche(todo, membres, responsables) {
     const renderGroup = (title, people, role) => people.length ? `
         <div class="task-people-summary-group">
-            <span>${echapperHtml(title)}</span>
+            <div class="task-people-summary-label">
+                <span>${echapperHtml(title)}</span>
+                <small>${people.length}</small>
+            </div>
             <div class="task-people-summary-avatars">
                 ${people.map((person) => construireAvatarCarte(person, role)).join('')}
             </div>
@@ -1521,7 +1587,14 @@ function construireResumePersonnesFiche(todo, membres, responsables) {
 
     return `
         <section class="task-property-card task-people-property">
-            <div class="task-property-heading"><span>Membres</span><button type="button" onclick="ouvrirPanneauFiche('people', event, true)" aria-label="Modifier les membres">✎</button></div>
+            <div class="task-property-heading">
+                <span>Équipe</span>
+                <button
+                    type="button"
+                    onclick="ouvrirPanneauFiche('people', event, true)"
+                    aria-label="Modifier les membres"
+                >✎</button>
+            </div>
             <div class="task-property-content task-people-summary">
                 ${renderGroup('Responsables', responsables, 'responsable')}
                 ${renderGroup('Membres', membres, 'member')}
@@ -1532,11 +1605,20 @@ function construireResumePersonnesFiche(todo, membres, responsables) {
 
 function construireResumeCouleurFiche(todo, color) {
     return `
-        <section class="task-property-card task-color-property" onclick="ouvrirPanneauFiche('color', event, true)">
-            <div class="task-property-heading"><span>Couleur</span><button type="button" aria-label="Modifier la couleur">✎</button></div>
+        <section
+            class="task-property-card task-color-property"
+            onclick="ouvrirPanneauFiche('color', event, true)"
+        >
+            <div class="task-property-heading">
+                <span>Couleur</span>
+                <button type="button" aria-label="Modifier la couleur">✎</button>
+            </div>
             <div class="task-property-content task-color-summary">
                 <span style="background:${echapperAttribut(color)}"></span>
-                <strong>${echapperHtml(color)}</strong>
+                <div>
+                    <strong>Couleur personnalisée</strong>
+                    <small>${echapperHtml(color)}</small>
+                </div>
             </div>
         </section>
     `;
@@ -1547,7 +1629,9 @@ function ouvrirPanneauFiche(panelName, event, forceOpen = false) {
     event?.stopPropagation();
 
     const popup = document.getElementById('popup-todo');
-    const target = popup?.querySelector(`.task-action-panel[data-panel="${panelName}"]`);
+    const target = popup?.querySelector(
+        `.task-action-panel[data-panel="${panelName}"]`
+    );
     if (!popup || !target) {
         return;
     }
@@ -1558,27 +1642,47 @@ function ouvrirPanneauFiche(panelName, event, forceOpen = false) {
     });
     popup.querySelectorAll('.task-quick-button').forEach((button) => {
         button.classList.remove('active');
+        button.setAttribute('aria-expanded', 'false');
     });
 
     if (!isAlreadyOpen || forceOpen) {
         target.hidden = false;
-        popup.querySelector(`[data-panel-trigger="${panelName}"]`)?.classList.add('active');
+        popup.classList.add('task-panel-open');
+        const backdrop = popup.querySelector('.task-panel-backdrop');
+        if (backdrop) backdrop.hidden = false;
+
+        const trigger = popup.querySelector(
+            `[data-panel-trigger="${panelName}"]`
+        );
+        trigger?.classList.add('active');
+        trigger?.setAttribute('aria-expanded', 'true');
+
         window.setTimeout(() => {
-            target.querySelector('input:not([type="checkbox"]):not([type="file"]), textarea, button')?.focus();
+            target.querySelector(
+                'input:not([type="checkbox"]):not([type="file"]), textarea, button'
+            )?.focus();
         }, 0);
+    } else {
+        fermerPanneauxFiche(event);
     }
 }
 
 function fermerPanneauxFiche(event) {
     event?.preventDefault();
     event?.stopPropagation();
+
     const popup = document.getElementById('popup-todo');
     popup?.querySelectorAll('.task-action-panel').forEach((panel) => {
         panel.hidden = true;
     });
     popup?.querySelectorAll('.task-quick-button').forEach((button) => {
         button.classList.remove('active');
+        button.setAttribute('aria-expanded', 'false');
     });
+
+    const backdrop = popup?.querySelector('.task-panel-backdrop');
+    if (backdrop) backdrop.hidden = true;
+    popup?.classList.remove('task-panel-open');
 }
 
 function filtrerPanneauFiche(input) {
@@ -1802,7 +1906,13 @@ function construireEditeurNotes(todo, disabled) {
             data-disabled="${disabled ? 'true' : 'false'}"
         >
             <div class="notes-heading">
-                <label class="field-label">Notes</label>
+                <div class="task-section-heading-copy">
+                    <span class="task-section-icon task-section-icon-notes">≡</span>
+                    <div>
+                        <label class="field-label">Notes</label>
+                        <small>Contexte, consignes et informations utiles</small>
+                    </div>
+                </div>
                 <button
                     type="button"
                     class="notes-edit-button"
@@ -3335,7 +3445,7 @@ function construireBlocChecklist(checklist, rowId, disabled) {
         >
             <div class="checklist-title-row">
                 <div class="checklist-title-main">
-                    <span class="checklist-title-icon">☑</span>
+                    <span class="task-section-icon task-section-icon-checklist">☑</span>
                     <input
                         type="text"
                         class="checklist-title-input"
@@ -3779,9 +3889,12 @@ function construireSectionRessources(todo, attachmentIds = normaliserIdsListe(to
     return `
         <section class="detail-section resources-section" data-row-id="${Number(todo.id)}">
             <div class="detail-section-header resource-section-header">
-                <div>
-                    <h3>📎 Pièces jointes et liens</h3>
-                    <p>${attachmentIds.length + links.length} ressource(s)</p>
+                <div class="task-section-heading-copy">
+                    <span class="task-section-icon task-section-icon-resources">📎</span>
+                    <div>
+                        <h3>Ressources</h3>
+                        <p>${attachmentIds.length + links.length} fichier(s) ou lien(s)</p>
+                    </div>
                 </div>
                 <button type="button" class="section-edit-button" onclick="ouvrirPanneauFiche('resources', event, true)">Ajouter</button>
             </div>
@@ -4269,10 +4382,13 @@ function construireSectionCommentaires(todo) {
             class="detail-section comments-section"
             data-row-id="${Number(todo.id)}"
         >
-            <div class="detail-section-header">
-                <div>
-                    <h3>💬 Commentaires</h3>
-                    <p>${comments.length} commentaire(s)</p>
+            <div class="detail-section-header comments-header">
+                <div class="task-section-heading-copy">
+                    <span class="task-section-icon task-section-icon-comments">💬</span>
+                    <div>
+                        <h3>Commentaires</h3>
+                        <p>${comments.length} commentaire(s) · échangez avec l’équipe</p>
+                    </div>
                 </div>
             </div>
 
@@ -5057,6 +5173,7 @@ function fermerPopup() {
         popup.dataset.currentTodo
     )?.classList.remove('active');
 
+    fermerPanneauxFiche();
     popup.classList.remove('visible');
     fermerTousLesMenusMultiples();
 }
