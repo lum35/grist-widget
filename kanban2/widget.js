@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8.1 ==========
-// Correctifs UX : typographie harmonisée, panneaux sans voile sombre, équipe unifiée et upload renforcé.
+// ========== KANBAN2 — VERSION 8.2 ==========
+// Métadonnées compactes sous les actions et checklists allégées.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -1092,28 +1092,19 @@ async function togglePopupTodo(todo) {
             </div>
             ${construirePanneauxActionsFiche(todo)}
 
-            <div class="task-detail-layout${hasContext ? ' has-context' : ' no-context'}">
-                ${hasContext ? `
-                    <aside class="task-context-column" aria-label="Détails de la carte">
-                        <div class="task-column-heading">
-                            <span class="task-column-heading-icon">◫</span>
-                            <div>
-                                <strong>Détails</strong>
-                                <small>Informations actives de la carte</small>
-                            </div>
-                        </div>
-                        ${dynamicContent.context}
-                    </aside>
-                ` : ''}
+            ${hasContext ? `
+                <div class="task-inline-context" aria-label="Informations actives de la carte">
+                    ${dynamicContent.context}
+                </div>
+            ` : ''}
 
-                ${hasMainContent ? `
-                    <main class="task-main-column">
-                        ${notesHtml}
-                        ${dynamicContent.checklists}
-                        ${commentsHtml}
-                    </main>
-                ` : ''}
-            </div>
+            ${hasMainContent ? `
+                <main class="task-main-column task-main-column-full">
+                    ${notesHtml}
+                    ${dynamicContent.checklists}
+                    ${commentsHtml}
+                </main>
+            ` : ''}
 
             ${metadata
                 ? `<div class="task-detail-metadata">${metadata}</div>`
@@ -1576,11 +1567,9 @@ function construireContenuDynamiqueFiche(todo) {
 
 function construireResumeEtiquettesFiche(todo, etiquettes) {
     return `
-        <section class="task-property-card task-label-property">
-            <div class="task-property-heading">
-                <span>Étiquettes</span>
-            </div>
-            <div class="task-property-content task-label-chips">
+        <section class="task-compact-meta task-compact-labels">
+            <span class="task-compact-meta-title">Étiquettes</span>
+            <div class="task-compact-meta-content task-label-chips">
                 ${etiquettes.map((item) => `
                     <span
                         class="etiquette-active"
@@ -1603,7 +1592,7 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
                 ${W.col.ETIQUETTES.getIsFormula() ? '' : `
                     <button
                         type="button"
-                        class="task-label-inline-add"
+                        class="task-compact-add task-label-inline-add"
                         onclick="ouvrirPanneauFiche('labels', event, true)"
                         aria-label="Ajouter une étiquette"
                         title="Ajouter une étiquette"
@@ -1619,78 +1608,63 @@ function construireResumeDateFiche(todo) {
     const isLate = timestamp !== null && timestamp < Date.now();
 
     return `
-        <section
-            class="task-property-card task-date-property${isLate ? ' is-late' : ''}"
+        <button
+            type="button"
+            class="task-compact-meta task-compact-date${isLate ? ' is-late' : ''}"
             onclick="ouvrirPanneauFiche('date', event, true)"
+            title="Modifier la date limite"
         >
-            <div class="task-property-heading">
-                <span>Date limite</span>
-                <button type="button" aria-label="Modifier la date">✎</button>
-            </div>
-            <div class="task-property-content task-date-summary">
-                <span class="task-property-icon">📅</span>
-                <div>
-                    <strong>${echapperHtml(formatDate(todo.DEADLINE))}</strong>
-                    <small>${isLate ? 'Échéance dépassée' : 'Échéance planifiée'}</small>
-                </div>
-            </div>
-        </section>
+            <span class="task-compact-meta-title">Date</span>
+            <span class="task-compact-date-value">
+                <span aria-hidden="true">📅</span>
+                <strong>${echapperHtml(formatDate(todo.DEADLINE))}</strong>
+                ${isLate ? '<small>En retard</small>' : ''}
+            </span>
+        </button>
     `;
 }
 
 function construireResumePersonnesFiche(todo, membres, responsables) {
     const responsibleIds = new Set(
-        responsables.map((person) => Number(person.id))
-    );
-    const secondaryMembers = membres.filter(
-        (person) => !responsibleIds.has(Number(person.id))
+        responsables
+            .map((person) => Number(person.id))
+            .filter((id) => Number.isInteger(id) && id > 0)
     );
 
-    const responsableChips = responsables.map((person) => `
-        <span
-            class="team-person-chip team-person-chip-responsable"
-            title="Responsable : ${echapperAttribut(person.label)}"
-        >
-            <span
-                class="team-person-chip-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-            >${echapperHtml(person.initials)}</span>
-            <span class="team-person-chip-name">${echapperHtml(person.label)}</span>
-            <small>Responsable</small>
-        </span>
-    `).join('');
-
-    const memberChips = secondaryMembers.map((person) => `
-        <span
-            class="team-person-chip"
-            title="Membre : ${echapperAttribut(person.label)}"
-        >
-            <span
-                class="team-person-chip-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-            >${echapperHtml(person.initials)}</span>
-            <span class="team-person-chip-name">${echapperHtml(person.label)}</span>
-        </span>
-    `).join('');
+    const merged = [
+        ...responsables.map((person) => ({
+            ...person,
+            role: 'responsable'
+        })),
+        ...membres
+            .filter((person) =>
+                !responsibleIds.has(Number(person.id))
+            )
+            .map((person) => ({
+                ...person,
+                role: 'membre'
+            }))
+    ];
 
     return `
-        <section class="task-property-card task-people-property">
-            <div class="task-property-heading">
-                <span>Équipe</span>
+        <section class="task-compact-meta task-compact-team">
+            <span class="task-compact-meta-title">Équipe</span>
+            <div class="task-compact-team-avatars">
+                ${merged.map((person) => `
+                    <span
+                        class="task-compact-avatar${person.role === 'responsable' ? ' is-responsable' : ''}"
+                        style="background:${echapperAttribut(person.avatarColor)}"
+                        title="${echapperAttribut(
+                            `${person.role === 'responsable' ? 'Responsable' : 'Membre'} : ${person.label}`
+                        )}"
+                    >${echapperHtml(person.initials)}</span>
+                `).join('')}
                 <button
                     type="button"
-                    onclick="ouvrirPanneauFiche('people', event, true)"
-                    aria-label="Modifier l’équipe"
-                >✎</button>
-            </div>
-            <div class="task-property-content team-summary-list">
-                ${responsableChips}
-                ${memberChips}
-                <button
-                    type="button"
-                    class="team-inline-add"
+                    class="task-compact-add"
                     onclick="ouvrirPanneauFiche('people', event, true)"
                     aria-label="Ajouter un membre ou un responsable"
+                    title="Modifier l’équipe"
                 >+</button>
             </div>
         </section>
@@ -1699,22 +1673,20 @@ function construireResumePersonnesFiche(todo, membres, responsables) {
 
 function construireResumeCouleurFiche(todo, color) {
     return `
-        <section
-            class="task-property-card task-color-property"
+        <button
+            type="button"
+            class="task-compact-meta task-compact-color"
             onclick="ouvrirPanneauFiche('color', event, true)"
+            title="Modifier la couleur de la carte"
         >
-            <div class="task-property-heading">
-                <span>Couleur</span>
-                <button type="button" aria-label="Modifier la couleur">✎</button>
-            </div>
-            <div class="task-property-content task-color-summary">
-                <span style="background:${echapperAttribut(color)}"></span>
-                <div>
-                    <strong>Couleur personnalisée</strong>
-                    <small>${echapperHtml(color)}</small>
-                </div>
-            </div>
-        </section>
+            <span class="task-compact-meta-title">Couleur</span>
+            <span
+                class="task-compact-color-dot"
+                style="background:${echapperAttribut(color)}"
+                aria-hidden="true"
+            ></span>
+            <span class="task-compact-color-code">${echapperHtml(color)}</span>
+        </button>
     `;
 }
 
@@ -3546,7 +3518,7 @@ function construireBlocChecklist(checklist, rowId, disabled) {
 
     return `
         <section
-            class="detail-section checklist-section"
+            class="detail-section checklist-section checklist-section-compact"
             data-row-id="${Number(rowId)}"
             data-checklist-id="${echapperAttribut(checklist.id)}"
             data-disabled="${disabled ? 'true' : 'false'}"
@@ -3563,6 +3535,9 @@ function construireBlocChecklist(checklist, rowId, disabled) {
                     >
                 </div>
                 <div class="checklist-title-actions">
+                    <span class="checklist-compact-count">
+                        ${doneCount}/${checklist.items.length}
+                    </span>
                     <span class="checklist-progress-percent">${progress}%</span>
                     ${disabled ? '' : `
                         <button
@@ -3576,12 +3551,14 @@ function construireBlocChecklist(checklist, rowId, disabled) {
                 </div>
             </div>
 
-            <div class="checklist-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
+            <div
+                class="checklist-progress checklist-progress-compact"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="${progress}"
+            >
                 <span style="width:${progress}%"></span>
-            </div>
-
-            <div class="checklist-subtitle">
-                <span>${doneCount}/${checklist.items.length} terminé(s)</span>
             </div>
 
             <div
@@ -3590,23 +3567,58 @@ function construireBlocChecklist(checklist, rowId, disabled) {
                 data-checklist-id="${echapperAttribut(checklist.id)}"
             >
                 ${checklist.items.length
-                    ? checklist.items.map((item) => construireItemChecklist(item, checklist.id, rowId, disabled)).join('')
+                    ? checklist.items
+                        .map((item) =>
+                            construireItemChecklist(
+                                item,
+                                checklist.id,
+                                rowId,
+                                disabled
+                            )
+                        )
+                        .join('')
                     : '<div class="section-empty checklist-empty">Cette checklist est vide.</div>'
                 }
             </div>
 
             ${disabled ? '' : `
-                <div class="checklist-add">
-                    <input
-                        type="text"
-                        class="checklist-add-input"
-                        placeholder="Ajouter un élément…"
-                        onkeydown="gererAjoutItemChecklistClavier(${Number(rowId)}, '${echapperJs(checklist.id)}', this, event)"
-                    >
+                <div class="checklist-add-zone">
                     <button
                         type="button"
-                        onclick="ajouterItemChecklist(${Number(rowId)}, '${echapperJs(checklist.id)}', this, event)"
-                    >Ajouter</button>
+                        class="checklist-add-trigger"
+                        onclick="ouvrirAjoutItemChecklist(this, event)"
+                    >＋ Ajouter un élément</button>
+
+                    <div class="checklist-add-composer" hidden>
+                        <input
+                            type="text"
+                            class="checklist-add-input"
+                            placeholder="Nom de l’élément…"
+                            onkeydown="gererAjoutItemChecklistClavier(
+                                ${Number(rowId)},
+                                '${echapperJs(checklist.id)}',
+                                this,
+                                event
+                            )"
+                        >
+                        <div class="checklist-add-actions">
+                            <button
+                                type="button"
+                                class="checklist-add-confirm"
+                                onclick="ajouterItemChecklist(
+                                    ${Number(rowId)},
+                                    '${echapperJs(checklist.id)}',
+                                    this,
+                                    event
+                                )"
+                            >Ajouter</button>
+                            <button
+                                type="button"
+                                class="checklist-add-cancel"
+                                onclick="fermerAjoutItemChecklist(this, event)"
+                            >Annuler</button>
+                        </div>
+                    </div>
                 </div>
             `}
 
@@ -3623,60 +3635,112 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
     const assignedPeople = item.memberIds
         .map((id) => RESPONSABLES_BY_ID.get(id))
         .filter(Boolean);
-    const overdue = !item.done && item.dueDate && new Date(`${item.dueDate}T23:59:59`).getTime() < Date.now();
+
+    const overdue =
+        !item.done &&
+        item.dueDate &&
+        new Date(`${item.dueDate}T23:59:59`).getTime() < Date.now();
+
+    const dueLabel = item.dueDate
+        ? formatDate(item.dueDate)
+        : 'Date';
 
     return `
         <article
-            class="checklist-item${item.done ? ' done' : ''}${overdue ? ' overdue' : ''}"
+            class="checklist-item checklist-item-compact${item.done ? ' done' : ''}${overdue ? ' overdue' : ''}"
             data-item-id="${echapperAttribut(item.id)}"
         >
             ${disabled ? '' : `
-                <button type="button" class="checklist-drag-handle" title="Déplacer" aria-label="Déplacer">⋮⋮</button>
+                <button
+                    type="button"
+                    class="checklist-drag-handle"
+                    title="Déplacer"
+                    aria-label="Déplacer"
+                >⋮⋮</button>
             `}
 
             <label class="checklist-check">
                 <input
                     type="checkbox"
                     ${item.done ? 'checked' : ''}
-                    onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'done', this.checked, this, event)"
+                    onchange="mettreAJourItemChecklist(
+                        ${Number(rowId)},
+                        '${echapperJs(checklistId)}',
+                        '${echapperJs(item.id)}',
+                        'done',
+                        this.checked,
+                        this,
+                        event
+                    )"
                     ${disabled ? 'disabled' : ''}
                 >
                 <span aria-hidden="true"></span>
             </label>
 
-            <div class="checklist-item-content">
-                <textarea
-                    class="checklist-item-text auto-expand"
-                    rows="1"
-                    oninput="ajusterTextarea(this)"
-                    onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'text', this.value, this, event)"
-                    ${disabled ? 'disabled' : ''}
-                >${echapperHtml(item.text)}</textarea>
+            <textarea
+                class="checklist-item-text auto-expand"
+                rows="1"
+                oninput="ajusterTextarea(this)"
+                onchange="mettreAJourItemChecklist(
+                    ${Number(rowId)},
+                    '${echapperJs(checklistId)}',
+                    '${echapperJs(item.id)}',
+                    'text',
+                    this.value,
+                    this,
+                    event
+                )"
+                ${disabled ? 'disabled' : ''}
+            >${echapperHtml(item.text)}</textarea>
 
-                <div class="checklist-item-meta">
-                    <label class="checklist-due${overdue ? ' overdue' : ''}" title="${overdue ? 'Échéance dépassée' : 'Date limite'}">
-                        <span>📅</span>
-                        <input
-                            type="date"
-                            value="${echapperAttribut(item.dueDate)}"
-                            onchange="mettreAJourItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', 'dueDate', this.value, this, event)"
-                            ${disabled ? 'disabled' : ''}
-                        >
-                    </label>
+            <div class="checklist-item-actions">
+                <label
+                    class="checklist-inline-date${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
+                    title="${overdue ? 'Échéance dépassée' : 'Date limite'}"
+                >
+                    <span aria-hidden="true">📅</span>
+                    <span class="checklist-inline-date-label">
+                        ${echapperHtml(dueLabel)}
+                    </span>
+                    <input
+                        type="date"
+                        value="${echapperAttribut(item.dueDate)}"
+                        onchange="mettreAJourItemChecklist(
+                            ${Number(rowId)},
+                            '${echapperJs(checklistId)}',
+                            '${echapperJs(item.id)}',
+                            'dueDate',
+                            this.value,
+                            this,
+                            event
+                        )"
+                        ${disabled ? 'disabled' : ''}
+                    >
+                </label>
 
-                    ${construireAssignationItemChecklist(item, checklistId, rowId, assignedPeople, disabled)}
-                </div>
+                ${construireAssignationItemChecklist(
+                    item,
+                    checklistId,
+                    rowId,
+                    assignedPeople,
+                    disabled
+                )}
+
+                ${disabled ? '' : `
+                    <button
+                        type="button"
+                        class="checklist-delete"
+                        onclick="supprimerItemChecklist(
+                            ${Number(rowId)},
+                            '${echapperJs(checklistId)}',
+                            '${echapperJs(item.id)}',
+                            event
+                        )"
+                        title="Supprimer l’élément"
+                        aria-label="Supprimer l’élément"
+                    >×</button>
+                `}
             </div>
-
-            ${disabled ? '' : `
-                <button
-                    type="button"
-                    class="checklist-delete"
-                    onclick="supprimerItemChecklist(${Number(rowId)}, '${echapperJs(checklistId)}', '${echapperJs(item.id)}', event)"
-                    title="Supprimer l’élément"
-                    aria-label="Supprimer l’élément"
-                >×</button>
-            `}
         </article>
     `;
 }
@@ -3734,6 +3798,44 @@ function filtrerOptionsChecklist(input) {
     details?.querySelectorAll('.checklist-person-option').forEach((option) => {
         option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
     });
+}
+
+function ouvrirAjoutItemChecklist(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const zone = button.closest('.checklist-add-zone');
+    const composer = zone?.querySelector('.checklist-add-composer');
+    const input = composer?.querySelector('.checklist-add-input');
+
+    if (!zone || !composer) {
+        return;
+    }
+
+    button.hidden = true;
+    composer.hidden = false;
+    input?.focus();
+}
+
+function fermerAjoutItemChecklist(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const zone = button.closest('.checklist-add-zone');
+    const composer = zone?.querySelector('.checklist-add-composer');
+    const trigger = zone?.querySelector('.checklist-add-trigger');
+    const input = composer?.querySelector('.checklist-add-input');
+
+    if (!zone || !composer || !trigger) {
+        return;
+    }
+
+    if (input) {
+        input.value = '';
+    }
+
+    composer.hidden = true;
+    trigger.hidden = false;
 }
 
 function gererAjoutItemChecklistClavier(rowId, checklistId, input, event) {
@@ -5879,6 +5981,8 @@ window.gererCreationChecklistClavier = gererCreationChecklistClavier;
 window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
 window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
 
+window.ouvrirAjoutItemChecklist = ouvrirAjoutItemChecklist;
+window.fermerAjoutItemChecklist = fermerAjoutItemChecklist;
 window.gererAjoutItemChecklistClavier = gererAjoutItemChecklistClavier;
 window.ajouterItemChecklist = ajouterItemChecklist;
 window.renommerChecklist = renommerChecklist;
