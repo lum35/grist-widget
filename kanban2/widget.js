@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 3 ==========
-// Responsables multiples, étiquettes Trello, pièces jointes et commentaires.
+// ========== KANBAN2 — VERSION 4 ==========
+// Responsables multiples, étiquettes Trello, pièces jointes, commentaires Grist et sélecteur de couleur.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -10,6 +10,7 @@ const BACKCOLOR = '#DCDCDC';
 const TEXTCOLOR = '#000000';
 const ATTACHMENT_TOKEN_MAX_AGE = 2 * 60 * 1000;
 const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
+const COMMENT_AUTHOR_PLACEHOLDER = '__GRIST_USER_NAME__';
 
 let RECS = [];
 let RESPONSABLES = [];
@@ -20,6 +21,7 @@ let ATTACHMENT_META = new Map();
 let ATTACHMENT_META_LOADED = false;
 let ATTACHMENT_READ_TOKEN = null;
 let ATTACHMENT_READ_TOKEN_AT = 0;
+let RESPONSABLE_WRITE_MODE = null;
 
 const RESPONSABLE_SAVE_QUEUES = new Map();
 const LABEL_SAVE_QUEUES = new Map();
@@ -30,8 +32,6 @@ const COMMENT_SAVE_QUEUES = new Map();
 window.addEventListener('load', async () => {
     W = new WidgetSDK();
     T = await W.loadTranslations(['widget.js']);
-
-    const lookupDetails = `If empty, the widget uses the column properties to build the list. Otherwise, provide either:\n• A list separated by ";"\n• A table or column reference starting with "$" ($TableID or $TableID.ColumnID)`;
 
     W.configureOptions(
         [
@@ -50,22 +50,6 @@ window.addEventListener('load', async () => {
                         WidgetSDK.newItem('hidecolumn', false, 'Hide', 'Hide this column.')
                     ]
                 }
-            ),
-            WidgetSDK.newItem(
-                'ref',
-                '',
-                'References',
-                'List of task references available.',
-                'Cards options',
-                {description: lookupDetails, columnId: 'REFERENCE_PROJET', type: 'lookup'}
-            ),
-            WidgetSDK.newItem(
-                'cardcolor',
-                '',
-                'Card color',
-                'List of colors available for card backgrounds.',
-                'Cards options',
-                {description: lookupDetails, columnId: 'COULEUR', type: 'lookup'}
             ),
             WidgetSDK.newItem('rotation', true, 'Tilt', 'Randomly tilt cards.', 'Display'),
             WidgetSDK.newItem('compact', false, 'Compact', 'Use a compact rendering.', 'Display'),
@@ -89,12 +73,11 @@ window.addEventListener('load', async () => {
             {name: 'DESCRIPTION_DISPLAY', title: 'Affichage de la tâche', description: 'Contenu personnalisé facultatif affiché sur la carte', type: 'Any', optional: true},
             {name: 'NOTES', title: 'Notes', description: 'Notes détaillées de la tâche', type: 'Any', optional: true},
             {name: 'DEADLINE', title: 'Échéance', description: 'Date limite ou ordre de priorité', type: 'Date', optional: true},
-            {name: 'REFERENCE_PROJET', title: 'Référence projet', description: 'Référence facultative associée à la tâche', type: 'Any', optional: true},
             {name: 'RESPONSABLE', title: 'Responsables', description: 'Personnes responsables de la tâche', type: 'RefList', strictType: true, optional: true},
             {name: 'ETIQUETTES', title: 'Étiquettes', description: 'Étiquettes multiples de type Trello', type: 'ChoiceList', strictType: true, optional: true},
             {name: 'PIECES_JOINTES', title: 'Pièces jointes', description: 'Fichiers et images associés à la tâche', type: 'Attachments', strictType: true, optional: true},
             {name: 'COMMENTAIRES', title: 'Commentaires', description: 'Commentaires du widget stockés en JSON', type: 'Text', strictType: true, optional: true},
-            {name: 'COULEUR', title: 'Couleur de carte', description: 'Couleur de fond facultative', type: 'Choice,Text', optional: true},
+            {name: 'COULEUR', title: 'Couleur de carte', description: 'Code hexadécimal choisi depuis le widget', type: 'Text', strictType: true, optional: true},
             {name: 'CREE_PAR', title: 'Créé par', type: 'Any', optional: true},
             {name: 'CREE_LE', title: 'Date de création', type: 'DateTime', optional: true},
             {name: 'DERNIERE_MISE_A_JOUR', title: 'Dernière mise à jour', description: 'Champ technique non affiché', type: 'DateTime', optional: true}
@@ -279,6 +262,7 @@ async function optionsChanged() {
 
 async function mappingChanged() {
     viderCacheResponsables();
+    RESPONSABLE_WRITE_MODE = null;
     ETIQUETTES = [];
     ATTACHMENT_META_LOADED = false;
     ATTACHMENT_READ_TOKEN = null;
@@ -338,7 +322,6 @@ function creerCarteTodo(todo) {
 
     appliquerCouleurCarte(card, todo.COULEUR);
 
-    const projectRef = valeurTexte(todo.REFERENCE_PROJET);
     const deadline = todo.DEADLINE ? formatDate(todo.DEADLINE) : '';
     const responsables = obtenirLibellesResponsables(todo);
     const etiquettes = normaliserListeTexte(todo.ETIQUETTES);
@@ -364,8 +347,7 @@ function creerCarteTodo(todo) {
         && deadlineTimestamp < DEADLINE_PRIORITE.getTime();
 
     card.innerHTML = `
-        ${projectRef ? `<div class="projet-ref truncate">#${echapperHtml(projectRef)}</div>` : ''}
-        ${labelsHtml ? `<div class="etiquettes-list">${labelsHtml}</div>` : (projectRef ? '<div class="card-spacer"></div>' : '')}
+        ${labelsHtml ? `<div class="etiquettes-list">${labelsHtml}</div>` : ''}
         <div class="description">${description}</div>
         ${deadline ? `<div class="deadline${isLate ? ' late' : ''} truncate">📅 ${echapperHtml(deadline)}</div>` : ''}
         ${responsables.length ? `<div class="responsables-list">${responsablesHtml}</div>` : ''}
@@ -406,22 +388,7 @@ function construireBadgeEtiquette(label) {
 }
 
 function appliquerCouleurCarte(card, rawColor) {
-    if (!rawColor || !W.map?.COULEUR || !W.col?.COULEUR) {
-        return;
-    }
-
-    let color = '';
-    if (W.col.COULEUR.type === 'Choice') {
-        color = W.col.COULEUR.getColor(rawColor) || '';
-    } else {
-        const candidate = valeurTexte(rawColor).trim();
-        if (/^#?[0-9a-f]{3,8}$/i.test(candidate)) {
-            color = candidate.startsWith('#') ? candidate : `#${candidate}`;
-        } else if (/^[a-z]+$/i.test(candidate)) {
-            color = candidate;
-        }
-    }
-
+    const color = normaliserCouleur(rawColor);
     if (color) {
         card.style.backgroundColor = color;
     }
@@ -579,43 +546,43 @@ async function togglePopupTodo(todo) {
         return;
     }
 
+    const fields = [];
     const descriptionDisabled = W.col.DESCRIPTION.getIsFormula();
     const notesDisabled = W.map?.NOTES ? W.col.NOTES.getIsFormula() : false;
 
-    // Le nom de la tâche et les notes sont volontairement placés tout en haut.
-    let form = `
-        <div class="task-main-fields">
-            <div class="field field-primary">
-                <label class="field-label">Nom de la tâche</label>
-                <textarea
-                    class="field-textarea auto-expand task-title-input"
-                    onchange="mettreAJourChamp(${Number(todo.id)}, 'DESCRIPTION', this.value, event)"
-                    oninput="ajusterTextarea(this)"
-                    ${descriptionDisabled ? 'disabled' : ''}
-                >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
-            </div>
-            ${W.map?.NOTES
-                ? `<div class="field field-primary">
-                    <label class="field-label">Notes</label>
-                    <textarea
-                        class="field-textarea auto-expand notes-input"
-                        onchange="mettreAJourChamp(${Number(todo.id)}, 'NOTES', this.value, event)"
-                        oninput="ajusterTextarea(this)"
-                        ${notesDisabled ? 'disabled' : ''}
-                    >${echapperHtml(valeurTexte(todo.NOTES))}</textarea>
-                  </div>`
-                : ''}
+    // Nom et notes restent dans la même grille que les autres champs, mais apparaissent en premier.
+    fields.push(`
+        <div class="field field-wide">
+            <label class="field-label">Nom de la tâche</label>
+            <textarea
+                class="field-textarea auto-expand task-title-input"
+                onchange="mettreAJourChamp(${Number(todo.id)}, 'DESCRIPTION', this.value, event)"
+                oninput="ajusterTextarea(this)"
+                ${descriptionDisabled ? 'disabled' : ''}
+            >${echapperHtml(valeurTexte(todo.DESCRIPTION))}</textarea>
         </div>
-    `;
+    `);
 
-    const compactFields = [];
+    if (W.map?.NOTES) {
+        fields.push(`
+            <div class="field field-wide">
+                <label class="field-label">Notes</label>
+                <textarea
+                    class="field-textarea auto-expand notes-input"
+                    onchange="mettreAJourChamp(${Number(todo.id)}, 'NOTES', this.value, event)"
+                    oninput="ajusterTextarea(this)"
+                    ${notesDisabled ? 'disabled' : ''}
+                >${echapperHtml(valeurTexte(todo.NOTES))}</textarea>
+            </div>
+        `);
+    }
 
     if (W.map?.ETIQUETTES) {
-        compactFields.push(construireChampEtiquettes(todo));
+        fields.push(construireChampEtiquettes(todo));
     }
 
     if (W.map?.RESPONSABLE) {
-        compactFields.push(insererChampResponsables(
+        fields.push(insererChampResponsables(
             todo.id,
             obtenirIdsResponsables(todo),
             W.map.RESPONSABLE,
@@ -624,7 +591,7 @@ async function togglePopupTodo(todo) {
     }
 
     if (W.map?.DEADLINE) {
-        compactFields.push(`
+        fields.push(`
             <div class="field">
                 <label class="field-label">Échéance</label>
                 <input
@@ -638,31 +605,11 @@ async function togglePopupTodo(todo) {
         `);
     }
 
-    if (W.map?.REFERENCE_PROJET) {
-        compactFields.push(insererChampSimple(
-            todo.id,
-            todo.REFERENCE_PROJET,
-            W.valuesList.ref,
-            'Référence projet',
-            'REFERENCE_PROJET',
-            W.col.REFERENCE_PROJET.getIsFormula()
-        ));
-    }
-
     if (W.map?.COULEUR) {
-        compactFields.push(insererChampSimple(
-            todo.id,
-            todo.COULEUR,
-            W.valuesList.cardcolor,
-            'Couleur de carte',
-            'COULEUR',
-            W.col.COULEUR.getIsFormula()
-        ));
+        fields.push(construireChampCouleur(todo));
     }
 
-    for (let index = 0; index < compactFields.length; index += 2) {
-        form += `<div class="field-row">${compactFields[index]}${compactFields[index + 1] || ''}</div>`;
-    }
+    let form = `<div class="form-grid">${fields.join('')}</div>`;
 
     if (W.map?.PIECES_JOINTES) {
         form += construireSectionPiecesJointes(todo);
@@ -698,63 +645,153 @@ async function togglePopupTodo(todo) {
     }
 }
 
-function insererChampSimple(id, value, list, title, column, disabled) {
-    const currentValue = valeurTexte(value);
-    const choices = [...new Set(normaliserListeTexte(list))];
-    const label = echapperHtml(title);
-
-    if (choices.length > 0 && choices.length < 20) {
-        const options = choices.map((choice) => `
-            <option value="${echapperAttribut(choice)}" ${choice === currentValue ? 'selected' : ''}>${echapperHtml(choice)}</option>
-        `).join('');
-
-        return `
-            <div class="field">
-                <label class="field-label">${label}</label>
-                <select
-                    class="field-select"
-                    onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value || null, event)"
-                    ${disabled ? 'disabled' : ''}
-                >
-                    <option value=""></option>
-                    ${options}
-                </select>
-            </div>
-        `;
-    }
-
-    if (choices.length >= 20) {
-        const dataListId = `list-${column}-${id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
-        const options = choices.map((choice) => `<option value="${echapperAttribut(choice)}"></option>`).join('');
-
-        return `
-            <div class="field">
-                <label class="field-label">${label}</label>
-                <input
-                    type="text"
-                    list="${dataListId}"
-                    class="field-input"
-                    value="${echapperAttribut(currentValue)}"
-                    onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value || null, event)"
-                    ${disabled ? 'disabled' : ''}
-                >
-                <datalist id="${dataListId}">${options}</datalist>
-            </div>
-        `;
-    }
+function construireChampCouleur(todo) {
+    const current = normaliserCouleur(todo.COULEUR);
+    const pickerValue = current || '#ffffd1';
+    const disabled = W.col.COULEUR.getIsFormula();
 
     return `
-        <div class="field">
-            <label class="field-label">${label}</label>
-            <input
-                type="text"
-                class="field-input"
-                value="${echapperAttribut(currentValue)}"
-                onchange="mettreAJourChamp(${Number(id)}, '${echapperJs(column)}', this.value || null, event)"
-                ${disabled ? 'disabled' : ''}
-            >
+        <div class="field color-field" data-row-id="${Number(todo.id)}">
+            <label class="field-label">Couleur de la carte</label>
+            <div class="color-picker-row">
+                <input
+                    type="color"
+                    class="color-picker"
+                    value="${echapperAttribut(pickerValue)}"
+                    oninput="previsualiserCouleur(${Number(todo.id)}, this.value, this)"
+                    onchange="mettreAJourCouleur(${Number(todo.id)}, this.value, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                    aria-label="Choisir une couleur"
+                >
+                <input
+                    type="text"
+                    class="field-input color-value"
+                    value="${echapperAttribut(current || '')}"
+                    placeholder="#FFFFD1"
+                    maxlength="7"
+                    oninput="previsualiserCouleur(${Number(todo.id)}, this.value, this)"
+                    onchange="mettreAJourCouleur(${Number(todo.id)}, this.value, this, event)"
+                    ${disabled ? 'disabled' : ''}
+                >
+                <button
+                    type="button"
+                    class="color-reset"
+                    onclick="reinitialiserCouleur(this, event)"
+                    ${disabled ? 'disabled' : ''}
+                    title="Utiliser la couleur par défaut"
+                >Réinitialiser</button>
+            </div>
+            <div class="section-status color-status" aria-live="polite"></div>
         </div>
     `;
+}
+
+function normaliserCouleur(value) {
+    const raw = valeurTexte(value).trim();
+    if (!raw) {
+        return '';
+    }
+
+    const candidate = raw.startsWith('#') ? raw : `#${raw}`;
+    if (/^#[0-9a-f]{3}$/i.test(candidate)) {
+        return `#${candidate[1]}${candidate[1]}${candidate[2]}${candidate[2]}${candidate[3]}${candidate[3]}`.toUpperCase();
+    }
+    if (/^#[0-9a-f]{6}$/i.test(candidate)) {
+        return candidate.toUpperCase();
+    }
+    return '';
+}
+
+function previsualiserCouleur(rowId, value, source) {
+    const color = normaliserCouleur(value);
+    if (!color) {
+        return;
+    }
+
+    const card = trouverCarteParId(rowId);
+    if (card) {
+        card.style.backgroundColor = color;
+    }
+
+    const field = source?.closest('.color-field');
+    if (field) {
+        const picker = field.querySelector('.color-picker');
+        const text = field.querySelector('.color-value');
+        if (picker && source !== picker) picker.value = color;
+        if (text && source !== text) text.value = color;
+    }
+}
+
+async function mettreAJourCouleur(rowId, value, source, event) {
+    event?.stopPropagation();
+
+    const field = source?.closest('.color-field');
+    const status = field?.querySelector('.color-status');
+    const raw = valeurTexte(value).trim();
+    const color = normaliserCouleur(raw);
+
+    if (raw && !color) {
+        if (status) {
+            status.className = 'section-status color-status error';
+            status.textContent = 'Utilisez un code hexadécimal, par exemple #FFFFD1.';
+        }
+        return;
+    }
+
+    try {
+        if (status) {
+            status.className = 'section-status color-status saving';
+            status.textContent = 'Enregistrement…';
+        }
+
+        await mettreAJourChamp(rowId, 'COULEUR', color || null, event);
+
+        const card = trouverCarteParId(rowId);
+        if (card) {
+            if (color) {
+                card.style.backgroundColor = color;
+            } else {
+                card.style.removeProperty('background-color');
+            }
+        }
+
+        if (field) {
+            const picker = field.querySelector('.color-picker');
+            const text = field.querySelector('.color-value');
+            if (picker) picker.value = color || '#ffffd1';
+            if (text) text.value = color || '';
+        }
+
+        if (status) {
+            status.className = 'section-status color-status saved';
+            status.textContent = 'Enregistré';
+            window.setTimeout(() => {
+                status.className = 'section-status color-status';
+                status.textContent = '';
+            }, 1200);
+        }
+    } catch (error) {
+        if (status) {
+            status.className = 'section-status color-status error';
+            status.textContent = 'Impossible d’enregistrer la couleur.';
+        }
+        console.error('Erreur pendant l’enregistrement de la couleur :', error);
+    }
+}
+
+function reinitialiserCouleur(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const field = button.closest('.color-field');
+    const rowId = Number(field?.dataset?.rowId);
+    if (!field || !Number.isInteger(rowId) || rowId <= 0) {
+        return;
+    }
+
+    const text = field.querySelector('.color-value');
+    if (text) text.value = '';
+    mettreAJourCouleur(rowId, '', button, event);
 }
 
 // ========== RESPONSABLES ==========
@@ -888,13 +925,120 @@ async function enregistrerResponsablesDansGrist(rowId, ids) {
         throw new Error('La colonne Responsable n’est pas correctement mappée.');
     }
 
-    const table = grist.getTable();
-    await table.update({
-        id: Number(rowId),
-        fields: {[actualColumnId]: [...ids]}
-    });
+    const normalizedIds = [...new Set(
+        normaliserTableau(ids)
+            .map(Number)
+            .filter((id) => Number.isInteger(id) && id > 0)
+    )];
 
-    await mettreAJourDateTechnique(rowId);
+    const [, referencedTableId] = valeurTexte(W.col.RESPONSABLE.type).split(':');
+    const candidates = [
+        {
+            mode: 'list',
+            value: ['L', ...normalizedIds]
+        },
+        {
+            mode: 'normal',
+            value: [...normalizedIds]
+        },
+        {
+            mode: 'reference-list',
+            value: ['r', referencedTableId, [...normalizedIds]]
+        }
+    ];
+
+    const orderedCandidates = RESPONSABLE_WRITE_MODE
+        ? [
+            ...candidates.filter((candidate) => candidate.mode === RESPONSABLE_WRITE_MODE),
+            ...candidates.filter((candidate) => candidate.mode !== RESPONSABLE_WRITE_MODE)
+        ]
+        : candidates;
+
+    const table = grist.getTable();
+    const attempts = [];
+
+    for (const candidate of orderedCandidates) {
+        try {
+            await table.update({
+                id: Number(rowId),
+                fields: {
+                    [actualColumnId]: candidate.value
+                }
+            }, {
+                parseStrings: false
+            });
+
+            const writtenValue = await lireValeurBruteCellule(rowId, actualColumnId);
+            const writtenIds = extraireIdsReferenceMultiple(writtenValue);
+
+            if (memeListeIds(normalizedIds, writtenIds)) {
+                RESPONSABLE_WRITE_MODE = candidate.mode;
+                await mettreAJourDateTechnique(rowId);
+                return;
+            }
+
+            attempts.push({
+                mode: candidate.mode,
+                sent: candidate.value,
+                received: writtenValue
+            });
+        } catch (error) {
+            attempts.push({
+                mode: candidate.mode,
+                sent: candidate.value,
+                error: error?.message || String(error)
+            });
+        }
+    }
+
+    console.error('Formats testés pour la RefList :', attempts);
+    throw new Error(
+        'Grist n’a accepté aucun format d’écriture pour la liste de références. ' +
+        'Vérifiez que la colonne mappée est bien une Liste de références vers la table Membres.'
+    );
+}
+
+async function lireValeurBruteCellule(rowId, columnId) {
+    const tableId = await grist.getTable().getTableId();
+    const rawTable = await grist.docApi.fetchTable(tableId);
+    const rowIndex = normaliserTableau(rawTable?.id).findIndex((id) => Number(id) === Number(rowId));
+
+    if (rowIndex < 0) {
+        throw new Error(`Ligne ${rowId} introuvable dans la table ${tableId}.`);
+    }
+
+    return rawTable?.[columnId]?.[rowIndex];
+}
+
+function extraireIdsReferenceMultiple(value) {
+    if (value === null || value === undefined || value === '') {
+        return [];
+    }
+
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    if (value[0] === 'E') {
+        return [];
+    }
+
+    if (value[0] === 'L') {
+        return normaliserIdsListe(value.slice(1));
+    }
+
+    if (value[0] === 'r') {
+        return normaliserIdsListe(value[2]);
+    }
+
+    return normaliserIdsListe(value);
+}
+
+function memeListeIds(expected, actual) {
+    const left = [...new Set(expected.map(Number))].sort((a, b) => a - b);
+    const right = [...new Set(actual.map(Number))].sort((a, b) => a - b);
+
+    return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 function mettreAJourResponsablesLocaux(rowId, ids) {
@@ -1366,7 +1510,6 @@ function iconePieceJointe(kind) {
 
 function construireSectionCommentaires(todo) {
     const comments = parserCommentaires(todo.COMMENTAIRES);
-    const author = localStorage.getItem('kanban2-comment-author') || '';
 
     return `
         <section class="detail-section comments-section" data-row-id="${Number(todo.id)}">
@@ -1380,14 +1523,14 @@ function construireSectionCommentaires(todo) {
                 ${construireListeCommentaires(comments, todo.id)}
             </div>
             <div class="comment-composer">
-                <input
-                    type="text"
-                    class="comment-author"
-                    value="${echapperAttribut(author)}"
-                    placeholder="Votre nom"
-                    onchange="memoriserAuteurCommentaire(this.value)"
-                >
-                <textarea class="comment-input" placeholder="Écrire un commentaire…" oninput="ajusterTextarea(this)"></textarea>
+                <textarea
+                    class="comment-input"
+                    placeholder="Écrire un commentaire…"
+                    oninput="ajusterTextarea(this)"
+                ></textarea>
+                <div class="comment-grist-author">
+                    Le nom est renseigné automatiquement par Grist avec <code>user.Name</code>.
+                </div>
                 <div class="comment-composer-footer">
                     <div id="comments-status-${Number(todo.id)}" class="section-status" aria-live="polite"></div>
                     <button type="button" onclick="ajouterCommentaire(${Number(todo.id)}, this, event)">Commenter</button>
@@ -1405,7 +1548,7 @@ function construireListeCommentaires(comments, rowId) {
     return comments.map((comment) => `
         <article class="comment-card" data-comment-id="${echapperAttribut(comment.id)}">
             <div class="comment-header">
-                <strong>${echapperHtml(comment.author || 'Anonyme')}</strong>
+                <strong>${echapperHtml(comment.author === COMMENT_AUTHOR_PLACEHOLDER ? 'Nom Grist non configuré' : (comment.author || 'Anonyme'))}</strong>
                 <span>${echapperHtml(formatDateTime(comment.createdAt))}</span>
                 <button type="button" onclick="supprimerCommentaire(${Number(rowId)}, '${echapperJs(comment.id)}', event)" title="Supprimer le commentaire">×</button>
             </div>
@@ -1445,9 +1588,6 @@ function parserCommentaires(rawValue) {
     }
 }
 
-function memoriserAuteurCommentaire(value) {
-    localStorage.setItem('kanban2-comment-author', valeurTexte(value).trim());
-}
 
 async function ajouterCommentaire(rowId, button, event) {
     event?.preventDefault();
@@ -1455,9 +1595,7 @@ async function ajouterCommentaire(rowId, button, event) {
 
     const section = button.closest('.comments-section');
     const textarea = section?.querySelector('.comment-input');
-    const authorInput = section?.querySelector('.comment-author');
     const text = valeurTexte(textarea?.value).trim();
-    const author = valeurTexte(authorInput?.value).trim() || 'Anonyme';
 
     if (!text) {
         afficherStatutSection('comments', rowId, 'error', 'Écrivez un commentaire.');
@@ -1465,28 +1603,46 @@ async function ajouterCommentaire(rowId, button, event) {
         return;
     }
 
-    memoriserAuteurCommentaire(author);
     button.disabled = true;
     afficherStatutSection('comments', rowId, 'saving', 'Enregistrement…');
 
     const comment = {
         id: genererIdentifiant(),
-        author,
+        author: COMMENT_AUTHOR_PLACEHOLDER,
         createdAt: new Date().toISOString(),
         text
     };
 
     try {
-        await mettreAJourCommentairesEnFile(rowId, (comments) => [...comments, comment]);
+        const savedComments = await mettreAJourCommentairesEnFile(
+            rowId,
+            (comments) => [...comments, comment]
+        );
+
+        const savedComment = savedComments.find((item) => item.id === comment.id);
+        if (!savedComment || savedComment.author === COMMENT_AUTHOR_PLACEHOLDER) {
+            throw new Error(
+                'La formule d’initialisation user.Name n’a pas remplacé le nom temporaire. ' +
+                'Configurez la colonne Commentaires comme indiqué dans le README.'
+            );
+        }
+
         if (textarea) {
             textarea.value = '';
             ajusterTextarea(textarea);
         }
+
         rafraichirCommentaires(rowId);
-        afficherStatutSection('comments', rowId, 'saved', 'Commentaire ajouté.');
+        afficherStatutSection('comments', rowId, 'saved', `Commentaire ajouté par ${savedComment.author}.`);
     } catch (error) {
         console.error('Erreur pendant l’ajout du commentaire :', error);
-        afficherStatutSection('comments', rowId, 'error', 'Impossible d’ajouter le commentaire.');
+        rafraichirCommentaires(rowId);
+        afficherStatutSection(
+            'comments',
+            rowId,
+            'error',
+            'Le commentaire a été envoyé, mais Grist n’a pas renseigné user.Name. Vérifiez la formule d’initialisation.'
+        );
     } finally {
         button.disabled = false;
     }
@@ -1526,9 +1682,15 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
                     : {})
             }));
 
+            // Une formule d’initialisation sur la colonne Commentaires remplace
+            // COMMENT_AUTHOR_PLACEHOLDER par user.Name au moment de l’écriture.
+            const refreshed = await rechargerCommentairesDepuisGrist(resolvedRowId);
+
             if (record) {
-                record.COMMENTAIRES = serialized;
+                record.COMMENTAIRES = JSON.stringify(refreshed);
             }
+
+            return refreshed;
         })
         .finally(() => {
             if (COMMENT_SAVE_QUEUES.get(resolvedRowId) === next) {
@@ -1538,6 +1700,23 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
 
     COMMENT_SAVE_QUEUES.set(resolvedRowId, next);
     return next;
+}
+
+async function rechargerCommentairesDepuisGrist(rowId) {
+    const actualColumnId = W.map?.COMMENTAIRES;
+    if (!actualColumnId || Array.isArray(actualColumnId)) {
+        throw new Error('La colonne Commentaires n’est pas correctement mappée.');
+    }
+
+    const rawValue = await lireValeurBruteCellule(rowId, actualColumnId);
+    const comments = parserCommentaires(rawValue);
+    const record = trouverRecord(rowId);
+
+    if (record) {
+        record.COMMENTAIRES = valeurTexte(rawValue);
+    }
+
+    return comments;
 }
 
 function rafraichirCommentaires(rowId) {
@@ -1608,8 +1787,6 @@ async function mettreAJourDateTechnique(rowId) {
 async function creerNouvelleTache(status) {
     try {
         const data = {DESCRIPTION: '', STATUT: status};
-
-        if (W.map?.REFERENCE_PROJET && !W.col.REFERENCE_PROJET.getIsFormula()) data.REFERENCE_PROJET = null;
         if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
         if (W.map?.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
         if (W.map?.COMMENTAIRES && !W.col.COMMENTAIRES.getIsFormula()) data.COMMENTAIRES = '[]';
@@ -1971,7 +2148,9 @@ window.ajouterPiecesJointes = ajouterPiecesJointes;
 window.retirerPieceJointe = retirerPieceJointe;
 window.ouvrirPieceJointe = ouvrirPieceJointe;
 window.fermerLecteurPieceJointe = fermerLecteurPieceJointe;
-window.memoriserAuteurCommentaire = memoriserAuteurCommentaire;
 window.ajouterCommentaire = ajouterCommentaire;
 window.supprimerCommentaire = supprimerCommentaire;
 window.ajusterTextarea = ajusterTextarea;
+window.previsualiserCouleur = previsualiserCouleur;
+window.mettreAJourCouleur = mettreAJourCouleur;
+window.reinitialiserCouleur = reinitialiserCouleur;
