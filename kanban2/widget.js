@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8.2 ==========
-// Métadonnées compactes sous les actions et checklists allégées.
+// ========== KANBAN2 — VERSION 8.3 ==========
+// Checklist alignée, sélecteur de date fiable et panneau équipe simplifié.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -1334,17 +1334,33 @@ function construirePanneauNouvelleChecklist(todo) {
 function construirePanneauPersonnesFiche(todo) {
     const selectedMembers = new Set(obtenirIdsMembres(todo));
     const selectedResponsables = new Set(obtenirIdsResponsables(todo));
-    const membersDisabled = !W.map?.MEMBRES || W.col.MEMBRES.getIsFormula();
-    const responsablesDisabled = !W.map?.RESPONSABLE || W.col.RESPONSABLE.getIsFormula();
+    const membersDisabled =
+        !W.map?.MEMBRES ||
+        W.col.MEMBRES.getIsFormula();
+    const responsablesDisabled =
+        !W.map?.RESPONSABLE ||
+        W.col.RESPONSABLE.getIsFormula();
 
     return `
-        <section class="task-action-panel task-people-panel" data-panel="people" hidden>
+        <section
+            class="task-action-panel task-people-panel"
+            data-panel="people"
+            data-row-id="${Number(todo.id)}"
+            hidden
+        >
             <div class="task-panel-heading">
                 <div>
                     <strong>Équipe de la carte</strong>
-                    <span>Attribuez un rôle à chaque personne sans dupliquer les listes</span>
+                    <span>
+                        Sélectionnez simplement le rôle de chaque personne,
+                        puis enregistrez.
+                    </span>
                 </div>
-                <button type="button" onclick="fermerPanneauxFiche(event)" aria-label="Fermer">×</button>
+                <button
+                    type="button"
+                    onclick="fermerPanneauxFiche(event)"
+                    aria-label="Fermer"
+                >×</button>
             </div>
 
             <div class="task-panel-search">
@@ -1355,16 +1371,19 @@ function construirePanneauPersonnesFiche(todo) {
                 >
             </div>
 
-            <div class="task-people-legend" aria-hidden="true">
-                <span>Personne</span>
-                <span>Membre</span>
-                <span>Responsable</span>
+            <div class="task-people-selection-summary" aria-live="polite">
+                <span data-team-count="MEMBRES">
+                    ${selectedMembers.size} membre(s)
+                </span>
+                <span data-team-count="RESPONSABLE">
+                    ${selectedResponsables.size} responsable(s)
+                </span>
             </div>
 
             <div class="task-people-roster">
                 ${RESPONSABLES.map((person) => `
-                    <div
-                        class="task-person-row"
+                    <article
+                        class="task-person-card"
                         data-search="${echapperAttribut(
                             `${person.label} ${person.email || ''}`
                                 .toLocaleLowerCase(W.cultureFull)
@@ -1375,6 +1394,7 @@ function construirePanneauPersonnesFiche(todo) {
                                 class="task-person-avatar"
                                 style="background:${echapperAttribut(person.avatarColor)}"
                             >${echapperHtml(person.initials)}</span>
+
                             <span class="task-person-copy">
                                 <strong>${echapperHtml(person.label)}</strong>
                                 ${person.email
@@ -1384,44 +1404,59 @@ function construirePanneauPersonnesFiche(todo) {
                             </span>
                         </div>
 
-                        <label class="person-role-toggle">
-                            <input
-                                type="checkbox"
+                        <div
+                            class="task-person-role-actions"
+                            aria-label="Rôles de ${echapperAttribut(person.label)}"
+                        >
+                            <button
+                                type="button"
+                                class="task-person-role-button task-person-role-member${selectedMembers.has(person.id) ? ' active' : ''}"
                                 data-role="MEMBRES"
-                                value="${person.id}"
-                                ${selectedMembers.has(person.id) ? 'checked' : ''}
-                                onchange="enregistrerRolePersonneDepuisPanneau(
-                                    ${Number(todo.id)},
-                                    'MEMBRES',
-                                    this.closest('.task-action-panel'),
-                                    event
-                                )"
+                                data-person-id="${person.id}"
+                                aria-pressed="${selectedMembers.has(person.id) ? 'true' : 'false'}"
+                                onclick="basculerRolePersonnePanneau(this, event)"
                                 ${membersDisabled ? 'disabled' : ''}
                             >
-                            <span>Membre</span>
-                        </label>
+                                <span aria-hidden="true">👤</span>
+                                <strong>Membre</strong>
+                            </button>
 
-                        <label class="person-role-toggle person-role-toggle-responsable">
-                            <input
-                                type="checkbox"
+                            <button
+                                type="button"
+                                class="task-person-role-button task-person-role-responsable${selectedResponsables.has(person.id) ? ' active' : ''}"
                                 data-role="RESPONSABLE"
-                                value="${person.id}"
-                                ${selectedResponsables.has(person.id) ? 'checked' : ''}
-                                onchange="enregistrerRolePersonneDepuisPanneau(
-                                    ${Number(todo.id)},
-                                    'RESPONSABLE',
-                                    this.closest('.task-action-panel'),
-                                    event
-                                )"
+                                data-person-id="${person.id}"
+                                aria-pressed="${selectedResponsables.has(person.id) ? 'true' : 'false'}"
+                                onclick="basculerRolePersonnePanneau(this, event)"
                                 ${responsablesDisabled ? 'disabled' : ''}
                             >
-                            <span>Responsable</span>
-                        </label>
+                                <span aria-hidden="true">◆</span>
+                                <strong>Responsable</strong>
+                            </button>
+                        </div>
+                    </article>
+                `).join('') || `
+                    <div class="section-empty">
+                        Aucune personne disponible dans la table Membres.
                     </div>
-                `).join('') || '<div class="section-empty">Aucune personne disponible dans la table Membres.</div>'}
+                `}
             </div>
 
-            <div class="task-panel-status section-status" aria-live="polite"></div>
+            <div class="task-people-panel-footer">
+                <div
+                    class="task-panel-status section-status"
+                    aria-live="polite"
+                ></div>
+                <button
+                    type="button"
+                    class="task-people-save-button"
+                    onclick="enregistrerEquipeDepuisPanneau(
+                        ${Number(todo.id)},
+                        this,
+                        event
+                    )"
+                >Enregistrer l’équipe</button>
+            </div>
         </section>
     `;
 }
@@ -1833,46 +1868,152 @@ async function retirerEtiquetteFiche(rowId, labelId, event) {
     await rafraichirFicheCourante(rowId);
 }
 
-async function enregistrerRolePersonneDepuisPanneau(
-    rowId,
-    mappingKey,
-    panel,
-    event
-) {
+function basculerRolePersonnePanneau(button, event) {
+    event?.preventDefault();
     event?.stopPropagation();
 
+    if (!button || button.disabled) {
+        return;
+    }
+
+    const active = !button.classList.contains('active');
+    button.classList.toggle('active', active);
+    button.setAttribute(
+        'aria-pressed',
+        active ? 'true' : 'false'
+    );
+
+    mettreAJourCompteursEquipePanneau(
+        button.closest('.task-action-panel')
+    );
+}
+
+function mettreAJourCompteursEquipePanneau(panel) {
+    if (!panel) {
+        return;
+    }
+
+    ['MEMBRES', 'RESPONSABLE'].forEach((role) => {
+        const count = panel.querySelectorAll(
+            `.task-person-role-button[data-role="${role}"].active`
+        ).length;
+
+        const target = panel.querySelector(
+            `[data-team-count="${role}"]`
+        );
+
+        if (target) {
+            target.textContent = role === 'MEMBRES'
+                ? `${count} membre(s)`
+                : `${count} responsable(s)`;
+        }
+    });
+}
+
+async function enregistrerEquipeDepuisPanneau(
+    rowId,
+    button,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const panel = button?.closest('.task-action-panel');
     const status = panel?.querySelector('.task-panel-status');
-    const ids = Array.from(
-        panel?.querySelectorAll(
-            `input[data-role="${mappingKey}"]:checked`
-        ) || []
+
+    if (!panel) {
+        return;
+    }
+
+    const memberIds = Array.from(
+        panel.querySelectorAll(
+            '.task-person-role-button[data-role="MEMBRES"].active'
+        )
     )
-        .map((input) => Number(input.value))
-        .filter((id) => RESPONSABLES_BY_ID.has(id));
+        .map((roleButton) =>
+            Number(roleButton.dataset.personId)
+        )
+        .filter((id) =>
+            Number.isInteger(id) &&
+            RESPONSABLES_BY_ID.has(id)
+        );
+
+    const responsableIds = Array.from(
+        panel.querySelectorAll(
+            '.task-person-role-button[data-role="RESPONSABLE"].active'
+        )
+    )
+        .map((roleButton) =>
+            Number(roleButton.dataset.personId)
+        )
+        .filter((id) =>
+            Number.isInteger(id) &&
+            RESPONSABLES_BY_ID.has(id)
+        );
+
+    button.disabled = true;
 
     try {
         if (status) {
-            status.className = 'task-panel-status section-status saving';
+            status.className =
+                'task-panel-status section-status saving';
             status.textContent = 'Enregistrement…';
         }
 
-        await ecrireReferenceMultiple(rowId, mappingKey, ids);
-        mettreAJourPersonnesLocales(rowId, mappingKey, ids);
-
-        if (status) {
-            status.className = 'task-panel-status section-status saved';
-            status.textContent = mappingKey === 'RESPONSABLE'
-                ? 'Responsables enregistrés.'
-                : 'Membres enregistrés.';
+        if (
+            W.map?.MEMBRES &&
+            !W.col.MEMBRES.getIsFormula()
+        ) {
+            await ecrireReferenceMultiple(
+                rowId,
+                'MEMBRES',
+                memberIds
+            );
+            mettreAJourPersonnesLocales(
+                rowId,
+                'MEMBRES',
+                memberIds
+            );
         }
 
-        await rafraichirFicheCourante(rowId, 'people');
+        if (
+            W.map?.RESPONSABLE &&
+            !W.col.RESPONSABLE.getIsFormula()
+        ) {
+            await ecrireReferenceMultiple(
+                rowId,
+                'RESPONSABLE',
+                responsableIds
+            );
+            mettreAJourPersonnesLocales(
+                rowId,
+                'RESPONSABLE',
+                responsableIds
+            );
+        }
+
+        if (status) {
+            status.className =
+                'task-panel-status section-status saved';
+            status.textContent = 'Équipe enregistrée.';
+        }
+
+        fermerPanneauxFiche();
+        await rafraichirFicheCourante(rowId);
     } catch (error) {
-        console.error('Impossible d’enregistrer le rôle :', error);
+        console.error(
+            'Impossible d’enregistrer l’équipe :',
+            error
+        );
+
         if (status) {
-            status.className = 'task-panel-status section-status error';
-            status.textContent = 'Impossible d’enregistrer ce rôle.';
+            status.className =
+                'task-panel-status section-status error';
+            status.textContent =
+                'Impossible d’enregistrer l’équipe.';
         }
+    } finally {
+        button.disabled = false;
     }
 }
 
@@ -3641,9 +3782,9 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
         item.dueDate &&
         new Date(`${item.dueDate}T23:59:59`).getTime() < Date.now();
 
-    const dueLabel = item.dueDate
-        ? formatDate(item.dueDate)
-        : 'Date';
+    const dateTitle = item.dueDate
+        ? `${overdue ? 'Échéance dépassée' : 'Date limite'} : ${formatDate(item.dueDate)}`
+        : 'Ajouter une date limite';
 
     return `
         <article
@@ -3694,17 +3835,24 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
             >${echapperHtml(item.text)}</textarea>
 
             <div class="checklist-item-actions">
-                <label
+                <div
                     class="checklist-inline-date${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
-                    title="${overdue ? 'Échéance dépassée' : 'Date limite'}"
                 >
-                    <span aria-hidden="true">📅</span>
-                    <span class="checklist-inline-date-label">
-                        ${echapperHtml(dueLabel)}
-                    </span>
+                    <button
+                        type="button"
+                        class="checklist-inline-date-button"
+                        onclick="ouvrirDateChecklist(this, event)"
+                        title="${echapperAttribut(dateTitle)}"
+                        aria-label="${echapperAttribut(dateTitle)}"
+                        ${disabled ? 'disabled' : ''}
+                    >📅</button>
+
                     <input
                         type="date"
+                        class="checklist-inline-date-input"
                         value="${echapperAttribut(item.dueDate)}"
+                        tabindex="-1"
+                        aria-hidden="true"
                         onchange="mettreAJourItemChecklist(
                             ${Number(rowId)},
                             '${echapperJs(checklistId)}',
@@ -3716,7 +3864,7 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
                         )"
                         ${disabled ? 'disabled' : ''}
                     >
-                </label>
+                </div>
 
                 ${construireAssignationItemChecklist(
                     item,
@@ -3798,6 +3946,32 @@ function filtrerOptionsChecklist(input) {
     details?.querySelectorAll('.checklist-person-option').forEach((option) => {
         option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
     });
+}
+
+function ouvrirDateChecklist(button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const wrapper = button?.closest('.checklist-inline-date');
+    const input = wrapper?.querySelector(
+        '.checklist-inline-date-input'
+    );
+
+    if (!input || input.disabled) {
+        return;
+    }
+
+    input.focus({preventScroll: true});
+
+    try {
+        if (typeof input.showPicker === 'function') {
+            input.showPicker();
+        } else {
+            input.click();
+        }
+    } catch (_) {
+        input.click();
+    }
 }
 
 function ouvrirAjoutItemChecklist(button, event) {
@@ -5976,11 +6150,13 @@ window.mettreAJourTitreFiche = mettreAJourTitreFiche;
 window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
 window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;
 window.retirerEtiquetteFiche = retirerEtiquetteFiche;
-window.enregistrerRolePersonneDepuisPanneau = enregistrerRolePersonneDepuisPanneau;
+window.basculerRolePersonnePanneau = basculerRolePersonnePanneau;
+window.enregistrerEquipeDepuisPanneau = enregistrerEquipeDepuisPanneau;
 window.gererCreationChecklistClavier = gererCreationChecklistClavier;
 window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
 window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
 
+window.ouvrirDateChecklist = ouvrirDateChecklist;
 window.ouvrirAjoutItemChecklist = ouvrirAjoutItemChecklist;
 window.fermerAjoutItemChecklist = fermerAjoutItemChecklist;
 window.gererAjoutItemChecklistClavier = gererAjoutItemChecklistClavier;
