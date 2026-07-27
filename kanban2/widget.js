@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8.3.2 ==========
-// Le bouton de suppression archive désormais la carte.
+// ========== KANBAN2 — VERSION 8.4 ==========
+// Dates de checklist, équipe, recherche et changement de liste corrigés.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -1025,6 +1025,7 @@ async function togglePopupTodo(todo) {
     trouverCarteParId(todo.id)?.classList.add('active');
 
     const columnOption = getColumnOptionByStatus(todo.STATUT);
+    const statusChoices = await W.col.STATUT.getChoices();
     const background = W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR;
     const color = W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR;
 
@@ -1073,13 +1074,33 @@ async function togglePopupTodo(todo) {
                 <div class="task-hero-accent" aria-hidden="true"></div>
                 <div class="task-hero-copy">
                     <div class="task-title-meta">
-                        <span
-                            class="task-status-pill"
-                            style="background:${echapperAttribut(background)};color:${echapperAttribut(color)}"
-                        >${echapperHtml(valeurTexte(todo.STATUT))}</span>
+                        <label
+                            class="task-status-selector"
+                            style="--status-background:${echapperAttribut(background)};--status-color:${echapperAttribut(color)}"
+                            title="Changer la liste de la carte"
+                        >
+                            <span class="task-status-selector-icon" aria-hidden="true">▾</span>
+                            <select
+                                class="task-status-select"
+                                aria-label="Liste de la carte"
+                                onchange="changerStatutDepuisFiche(
+                                    ${Number(todo.id)},
+                                    this,
+                                    event
+                                )"
+                            >
+                                ${statusChoices.map((status) => `
+                                    <option
+                                        value="${echapperAttribut(status)}"
+                                        ${valeurTexte(status) === valeurTexte(todo.STATUT) ? 'selected' : ''}
+                                    >${echapperHtml(valeurTexte(status))}</option>
+                                `).join('')}
+                            </select>
+                        </label>
+
                         ${columnOption?.isdone
                             ? '<span class="task-completed-pill">✓ Terminée</span>'
-                            : '<span class="task-type-caption">Carte de travail</span>'
+                            : ''
                         }
                     </div>
                     <textarea
@@ -1787,11 +1808,27 @@ function fermerPanneauxFiche(event) {
     popup?.classList.remove('task-panel-open');
 }
 
+function normaliserTexteRecherche(value) {
+    return valeurTexte(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLocaleLowerCase(W.cultureFull);
+}
+
 function filtrerPanneauFiche(input) {
-    const panel = input.closest('.task-action-panel');
-    const query = valeurTexte(input.value).trim().toLocaleLowerCase(W.cultureFull);
-    panel?.querySelectorAll('[data-search]').forEach((option) => {
-        option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
+    const panel = input?.closest('.task-action-panel');
+    if (!panel) {
+        return;
+    }
+
+    const query = normaliserTexteRecherche(input.value);
+
+    panel.querySelectorAll('[data-search]').forEach((option) => {
+        const haystack = normaliserTexteRecherche(option.dataset.search);
+        const visible = query === '' || haystack.includes(query);
+        option.hidden = !visible;
+        option.style.display = visible ? '' : 'none';
     });
 }
 
@@ -1811,6 +1848,58 @@ async function rafraichirFicheCourante(rowId, panelName = '') {
     }
     if (panelName) {
         ouvrirPanneauFiche(panelName, null, true);
+    }
+}
+
+async function changerStatutDepuisFiche(
+    rowId,
+    select,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const newStatus = valeurTexte(select?.value).trim();
+    const record = trouverRecord(rowId);
+
+    if (
+        !newStatus ||
+        !record ||
+        newStatus === valeurTexte(record.STATUT)
+    ) {
+        return;
+    }
+
+    const previousStatus = valeurTexte(record.STATUT);
+    select.disabled = true;
+
+    try {
+        const columnInfo = getColumnOptionByStatus(newStatus);
+        if (columnInfo?.useconfetti) {
+            triggerConfetti();
+        }
+
+        const data = {
+            STATUT: newStatus,
+            ...construireChampsSuivi()
+        };
+
+        if (
+            W.map?.ORDRE &&
+            !W.col.ORDRE.getIsFormula()
+        ) {
+            data.ORDRE = prochainOrdrePourStatut(newStatus);
+        }
+
+        await W.updateRecords(W.formatRecord(rowId, data));
+        Object.assign(record, data);
+
+        await afficherKanban(RECS);
+        await rafraichirFicheCourante(rowId);
+    } catch (error) {
+        console.error('Impossible de changer la liste de la carte :', error);
+        select.value = previousStatus;
+        select.disabled = false;
     }
 }
 
@@ -1882,16 +1971,40 @@ function basculerRolePersonnePanneau(button, event) {
         return;
     }
 
+    const panel = button.closest('.task-action-panel');
+    const personId = Number(button.dataset.personId);
+    const role = valeurTexte(button.dataset.role);
     const active = !button.classList.contains('active');
-    button.classList.toggle('active', active);
-    button.setAttribute(
-        'aria-pressed',
-        active ? 'true' : 'false'
+
+    const memberButton = panel?.querySelector(
+        `.task-person-role-button[data-role="MEMBRES"][data-person-id="${personId}"]`
+    );
+    const responsableButton = panel?.querySelector(
+        `.task-person-role-button[data-role="RESPONSABLE"][data-person-id="${personId}"]`
     );
 
-    mettreAJourCompteursEquipePanneau(
-        button.closest('.task-action-panel')
-    );
+    definirEtatBoutonRole(button, active);
+
+    if (role === 'RESPONSABLE') {
+        definirEtatBoutonRole(memberButton, active);
+    } else if (
+        role === 'MEMBRES' &&
+        !active &&
+        responsableButton?.classList.contains('active')
+    ) {
+        definirEtatBoutonRole(responsableButton, false);
+    }
+
+    mettreAJourCompteursEquipePanneau(panel);
+}
+
+function definirEtatBoutonRole(button, active) {
+    if (!button || button.disabled) {
+        return;
+    }
+
+    button.classList.toggle('active', Boolean(active));
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
 }
 
 function mettreAJourCompteursEquipePanneau(panel) {
@@ -3848,7 +3961,13 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
                     <span
                         class="checklist-inline-date-button"
                         aria-hidden="true"
-                    >📅</span>
+                    >
+                        <span class="checklist-inline-date-emoji">📅</span>
+                        ${item.dueDate
+                            ? `<span class="checklist-inline-date-value">${echapperHtml(formatDateChecklistCompact(item.dueDate))}</span>`
+                            : ''
+                        }
+                    </span>
 
                     <input
                         type="date"
@@ -6104,6 +6223,30 @@ function formatDate(dateValue) {
     return `${day} ${month} ${date.getFullYear()}`;
 }
 
+function formatDateChecklistCompact(dateValue) {
+    if (!dateValue) {
+        return '';
+    }
+
+    const raw = valeurTexte(dateValue).trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+    if (match) {
+        return `${match[3]}/${match[2]}/${match[1]}`;
+    }
+
+    const date = new Date(dateValue);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+
+    return date.toLocaleDateString(W.cultureFull, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+    });
+}
+
 function formatDateTime(dateValue) {
     if (!dateValue) return '';
     const date = new Date(dateValue);
@@ -6224,6 +6367,7 @@ window.retirerEtiquetteActive = retirerEtiquetteActive;
 window.ouvrirPanneauFiche = ouvrirPanneauFiche;
 window.fermerPanneauxFiche = fermerPanneauxFiche;
 window.filtrerPanneauFiche = filtrerPanneauFiche;
+window.changerStatutDepuisFiche = changerStatutDepuisFiche;
 window.mettreAJourTitreFiche = mettreAJourTitreFiche;
 window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
 window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;

@@ -1,4 +1,4 @@
-/* ========== KANBAN2 — VERSION 8.3.2 ========== */
+/* ========== KANBAN2 — VERSION 8.4 ========== */
 
 :root {
     --border-radius: 6px;
@@ -5953,5 +5953,134 @@ button.task-compact-meta:hover {
     .archive-status-message {
         color: #fecdd3;
         background: #4c0519;
+    }
+}
+
+
+/* ========================================================================== */
+/* KANBAN2 V8.4 — STATUT, RECHERCHE ET DATES CHECKLIST                        */
+/* ========================================================================== */
+
+.task-status-selector {
+    position: relative;
+    display: inline-flex;
+    max-width: min(280px, 100%);
+    min-height: 28px;
+    align-items: center;
+    overflow: hidden;
+    border-radius: 999px;
+    color: var(--status-color);
+    background: var(--status-background);
+    cursor: pointer;
+}
+
+.task-status-select {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    min-width: 90px;
+    max-width: 280px;
+    min-height: 28px;
+    padding: 0.25rem 1.65rem 0.25rem 0.68rem;
+    overflow: hidden;
+    border: 0;
+    outline: 0;
+    appearance: none;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-status-select:focus-visible {
+    box-shadow: inset 0 0 0 2px currentColor;
+}
+
+.task-status-select:disabled {
+    cursor: wait;
+    opacity: 0.62;
+}
+
+.task-status-select option {
+    color: var(--text-color);
+    background: var(--background-row);
+}
+
+.task-status-selector-icon {
+    position: absolute;
+    z-index: 2;
+    right: 0.58rem;
+    pointer-events: none;
+    font-size: 0.65rem;
+}
+
+.task-person-card[hidden],
+.task-action-panel [data-search][hidden] {
+    display: none !important;
+}
+
+.checklist-inline-date {
+    width: auto;
+    min-width: 31px;
+    max-width: 132px;
+}
+
+.checklist-inline-date-button {
+    width: auto;
+    min-width: 31px;
+    max-width: 132px;
+    padding: 0 0.42rem;
+    gap: 0.26rem;
+    pointer-events: none;
+}
+
+.checklist-inline-date-value {
+    overflow: hidden;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.checklist-inline-date-input {
+    z-index: 5;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.001;
+    pointer-events: auto;
+}
+
+.checklist-inline-date:hover .checklist-inline-date-button {
+    border-color: var(--border-color);
+    color: var(--text-color);
+    background: var(--background-hover);
+}
+
+.checklist-inline-date.has-date .checklist-inline-date-button {
+    min-width: 96px;
+}
+
+@media (max-width: 480px) {
+    .task-status-selector,
+    .task-status-select {
+        max-width: 210px;
+    }
+
+    .checklist-inline-date.has-date .checklist-inline-date-button {
+        min-width: 31px;
+        max-width: 31px;
+        padding: 0;
+    }
+
+    .checklist-inline-date.has-date {
+        max-width: 31px;
+    }
+
+    .checklist-inline-date-value {
+        display: none;
     }
 }
