@@ -1,11 +1,18 @@
-// ========== KANBAN2 — VERSION 9.0 ==========
-// Refonte technique complète : source modulaire, état centralisé et API publique minimale.
+// ========== KANBAN2 — VERSION 9.0.1 ==========
+// Correctif de la refonte technique : références Grist et état centralisé réparés.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 'use strict';
 
 let widget;
 let translate;
+
+const DEADLINE_PRIORITE = new Date('3000-01-01');
+const BACKCOLOR = '#DCDCDC';
+const TEXTCOLOR = '#000000';
+const ATTACHMENT_TOKEN_MAX_AGE = 2 * 60 * 1000;
+const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
+const COMMENT_AUTHOR_PLACEHOLDER = '__GRIST_USER_NAME__';
 
 /**
  * État unique du widget. Aucune donnée métier n’est stockée dans le DOM.
@@ -289,7 +296,7 @@ async function chargerPersonnes(force = false) {
                 person.label !== '#KeyError'
             )
             .sort((a, b) =>
-                a.label.localeCompare(b.label, widget.cultureFull, {sensitivity: 'base'})
+                a.label.localeCompare(b.label, widget?.cultureFull || 'fr-FR', {sensitivity: 'base'})
             );
 
         STATE.people.byId = new Map(
@@ -309,12 +316,12 @@ function viderCachePersonnes() {
 }
 
 async function chargerEtiquettes(force = false) {
-    if (!widget?.map?.STATE.labels.items || !widget?.col?.STATE.labels.items) {
+    if (!widget?.map?.ETIQUETTES || !widget?.col?.ETIQUETTES) {
         viderCacheEtiquettes();
         return;
     }
 
-    const colMeta = widget.col.STATE.labels.items;
+    const colMeta = widget.col.ETIQUETTES;
     const cacheKey = `${colMeta.type}:${colMeta.visibleCol}`;
 
     if (!force && STATE.labels.loadedFor === cacheKey && STATE.labels.items.length > 0) {
@@ -358,7 +365,7 @@ async function chargerEtiquettes(force = false) {
                 };
             })
             .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.label && item.label !== '#KeyError')
-            .sort((a, b) => a.label.localeCompare(b.label, widget.cultureFull, {sensitivity: 'base'}));
+            .sort((a, b) => a.label.localeCompare(b.label, widget?.cultureFull || 'fr-FR', {sensitivity: 'base'}));
 
         STATE.labels.byId = new Map(STATE.labels.items.map((item) => [item.id, item]));
         STATE.labels.loadedFor = cacheKey;
@@ -1317,7 +1324,7 @@ function construireBarreActionsFiche(todo) {
 function construirePanneauxActionsFiche(todo) {
     const panels = [
         construireMenuAjouterFiche(todo),
-        widget.map?.STATE.labels.items ? construirePanneauEtiquettesFiche(todo) : '',
+        widget.map?.ETIQUETTES ? construirePanneauEtiquettesFiche(todo) : '',
         widget.map?.DEADLINE ? construirePanneauDateFiche(todo) : '',
         widget.map?.CHECKLIST ? construirePanneauNouvelleChecklist(todo) : '',
         (widget.map?.MEMBRES || widget.map?.RESPONSABLE) ? construirePanneauPersonnesFiche(todo) : '',
@@ -1335,7 +1342,7 @@ function construirePanneauxActionsFiche(todo) {
 function construireMenuAjouterFiche(todo) {
     const entries = [];
 
-    if (widget.map?.STATE.labels.items) {
+    if (widget.map?.ETIQUETTES) {
         entries.push(['🏷️', 'Étiquettes', 'labels']);
     }
     if (widget.map?.DEADLINE) {
@@ -1374,7 +1381,7 @@ function construireMenuAjouterFiche(todo) {
 
 function construirePanneauEtiquettesFiche(todo) {
     const selected = new Set(obtenirIdsEtiquettes(todo));
-    const disabled = widget.col.STATE.labels.items.getIsFormula();
+    const disabled = widget.col.ETIQUETTES.getIsFormula();
 
     return `
         <section class="task-action-panel" data-panel="labels" hidden>
@@ -1748,7 +1755,7 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
                         style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
                     >
                         <span>${echapperHtml(item.label)}</span>
-                        ${widget.col.STATE.labels.items.getIsFormula() ? '' : `
+                        ${widget.col.ETIQUETTES.getIsFormula() ? '' : `
                             <button
                                 type="button"
                                 onclick="retirerEtiquetteFiche(
@@ -1761,7 +1768,7 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
                         `}
                     </span>
                 `).join('')}
-                ${widget.col.STATE.labels.items.getIsFormula() ? '' : `
+                ${widget.col.ETIQUETTES.getIsFormula() ? '' : `
                     <button
                         type="button"
                         class="task-compact-add task-label-inline-add"
@@ -3132,7 +3139,7 @@ function previsualiserCouleur(rowId, value, source) {
     }
 }
 
-// ========== MEMBRES, RESPONSABLES ET ÉTIQUETTES (REFLIST) ==========
+// ========== MEMBRES, STATE.people.items ET ÉTIQUETTES (REFLIST) ==========
 
 
 
@@ -3165,7 +3172,7 @@ function mettreAJourEtiquettesLocales(rowId, ids) {
     if (!record) return;
 
     record.ETIQUETTES_id = [...ids];
-    record.STATE.labels.items = ids
+    record.ETIQUETTES = ids
         .map((id) => STATE.labels.byId.get(id)?.label)
         .filter(Boolean);
 }
@@ -4146,7 +4153,7 @@ function construireCarteLien(rowId, link) {
                     <small>${echapperHtml(hostname)}</small>
                 </span>
             </a>
-            ${(W.map?.LIENS && !W.col.LIENS.getIsFormula()) ? `
+            ${(widget.map?.LIENS && !widget.col.LIENS.getIsFormula()) ? `
                 <button
                     type="button"
                     onclick="retirerLienFiche(${Number(rowId)}, '${echapperJs(link.id)}', event)"
@@ -4209,7 +4216,7 @@ async function retirerLienFiche(rowId, linkId, event) {
 
 async function enregistrerLiensEnFile(rowId, transform) {
     const resolvedRowId = Number(rowId);
-    const previous = LINK_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const previous = SAVE_QUEUES.links.get(resolvedRowId) || Promise.resolve();
 
     const next = previous
         .catch(() => undefined)
@@ -4232,12 +4239,12 @@ async function enregistrerLiensEnFile(rowId, transform) {
             return updated;
         })
         .finally(() => {
-            if (LINK_SAVE_QUEUES.get(resolvedRowId) === next) {
-                LINK_SAVE_QUEUES.delete(resolvedRowId);
+            if (SAVE_QUEUES.links.get(resolvedRowId) === next) {
+                SAVE_QUEUES.links.delete(resolvedRowId);
             }
         });
 
-    LINK_SAVE_QUEUES.set(resolvedRowId, next);
+    SAVE_QUEUES.links.set(resolvedRowId, next);
     return next;
 }
 
@@ -4289,7 +4296,7 @@ function construireCartePieceJointe(rowId, attachmentId, tokenInfo) {
             </div>
             <div class="attachment-actions">
                 <button type="button" onclick="ouvrirPieceJointe(${Number(rowId)}, ${Number(attachmentId)}, event)" title="Visualiser">👁</button>
-                ${(W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula())
+                ${(widget.map?.PIECES_JOINTES && !widget.col.PIECES_JOINTES.getIsFormula())
                     ? `<button type="button" onclick="retirerPieceJointe(${Number(rowId)}, ${Number(attachmentId)}, event)" title="Retirer de la tâche">×</button>`
                     : ''}
             </div>
@@ -4456,8 +4463,8 @@ async function ajouterPiecesJointes(rowId, input, event) {
             record.PIECES_JOINTES = [...newIds];
         }
 
-        ATTACHMENT_META_LOADED = false;
-        ATTACHMENT_READ_TOKEN = null;
+        STATE.attachments.metaLoaded = false;
+        STATE.attachments.readToken = null;
         await chargerMetaPiecesJointes(true);
 
         setStatus(
@@ -4505,7 +4512,7 @@ async function retirerPieceJointe(rowId, attachmentId, event) {
 }
 
 async function enregistrerPiecesJointesDansGrist(rowId, ids) {
-    const actualColumnId = W.map?.PIECES_JOINTES;
+    const actualColumnId = widget.map?.PIECES_JOINTES;
     if (!actualColumnId || Array.isArray(actualColumnId)) {
         throw new Error('La colonne Pièces jointes n’est pas correctement mappée.');
     }
@@ -4564,14 +4571,6 @@ function initialiserLecteurPiecesJointes() {
 }
 
 function afficherLecteurPieceJointe(meta, url) {
-    const archiveDialog = document.getElementById(
-        'archive-confirm-dialog'
-    );
-    if (archiveDialog) {
-        fermerPopupArchivage(event);
-        return;
-    }
-
     const viewer = document.getElementById('attachment-viewer');
     const content = document.getElementById('attachment-viewer-content');
     const title = document.getElementById('attachment-viewer-title');
@@ -4617,14 +4616,14 @@ function fermerLecteurPieceJointe(event) {
 }
 
 async function obtenirTokenPiecesJointes(readOnly = true) {
-    if (readOnly && ATTACHMENT_READ_TOKEN && Date.now() - ATTACHMENT_READ_TOKEN_AT < ATTACHMENT_TOKEN_MAX_AGE) {
-        return ATTACHMENT_READ_TOKEN;
+    if (readOnly && STATE.attachments.readToken && Date.now() - STATE.attachments.readTokenAt < ATTACHMENT_TOKEN_MAX_AGE) {
+        return STATE.attachments.readToken;
     }
 
     const token = await grist.docApi.getAccessToken({readOnly});
     if (readOnly) {
-        ATTACHMENT_READ_TOKEN = token;
-        ATTACHMENT_READ_TOKEN_AT = Date.now();
+        STATE.attachments.readToken = token;
+        STATE.attachments.readTokenAt = Date.now();
     }
     return token;
 }
@@ -4634,7 +4633,7 @@ function construireUrlPieceJointe(tokenInfo, attachmentId) {
 }
 
 function getAttachmentMeta(id) {
-    return ATTACHMENT_META.get(Number(id)) || {
+    return STATE.attachments.meta.get(Number(id)) || {
         id: Number(id),
         fileName: `Pièce jointe ${Number(id)}`,
         fileExt: '',
@@ -4931,7 +4930,7 @@ async function supprimerCommentaire(rowId, commentId, event) {
 async function mettreAJourCommentairesEnFile(rowId, transform) {
     const resolvedRowId = Number(rowId);
     const previous =
-        COMMENT_SAVE_QUEUES.get(resolvedRowId) ||
+        SAVE_QUEUES.comments.get(resolvedRowId) ||
         Promise.resolve();
 
     const next = previous
@@ -4945,8 +4944,8 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
             const serialized = JSON.stringify(updated);
             const tracking = construireChampsSuivi();
 
-            await W.updateRecords(
-                W.formatRecord(resolvedRowId, {
+            await widget.updateRecords(
+                widget.formatRecord(resolvedRowId, {
                     COMMENTAIRES: serialized,
                     ...tracking
                 })
@@ -4966,18 +4965,18 @@ async function mettreAJourCommentairesEnFile(rowId, transform) {
         })
         .finally(() => {
             if (
-                COMMENT_SAVE_QUEUES.get(resolvedRowId) === next
+                SAVE_QUEUES.comments.get(resolvedRowId) === next
             ) {
-                COMMENT_SAVE_QUEUES.delete(resolvedRowId);
+                SAVE_QUEUES.comments.delete(resolvedRowId);
             }
         });
 
-    COMMENT_SAVE_QUEUES.set(resolvedRowId, next);
+    SAVE_QUEUES.comments.set(resolvedRowId, next);
     return next;
 }
 
 async function rechargerCommentairesDepuisGrist(rowId) {
-    const actualColumnId = W.map?.COMMENTAIRES;
+    const actualColumnId = widget.map?.COMMENTAIRES;
 
     if (!actualColumnId || Array.isArray(actualColumnId)) {
         throw new Error(
@@ -5041,7 +5040,7 @@ async function mettreAJourChamp(todoId, field, value, event) {
             ...(field === 'DERNIERE_MISE_A_JOUR' || field === 'MODIFIE_PAR' ? {} : construireChampsSuivi())
         };
 
-        await W.updateRecords(W.formatRecord(todoId, data));
+        await widget.updateRecords(widget.formatRecord(todoId, data));
 
         const record = trouverRecord(todoId);
         if (record) {
@@ -5054,7 +5053,7 @@ async function mettreAJourChamp(todoId, field, value, event) {
             }
         }
     } catch (error) {
-        console.error(T('Error during update:'), error);
+        console.error(translate('Error during update:'), error);
         throw error;
     }
 }
@@ -5062,11 +5061,11 @@ async function mettreAJourChamp(todoId, field, value, event) {
 function construireChampsSuivi() {
     const data = {};
 
-    if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
+    if (widget.map?.DERNIERE_MISE_A_JOUR && !widget.col.DERNIERE_MISE_A_JOUR.getIsFormula()) {
         data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
     }
 
-    if (W.map?.MODIFIE_PAR && !W.col.MODIFIE_PAR.getIsFormula()) {
+    if (widget.map?.MODIFIE_PAR && !widget.col.MODIFIE_PAR.getIsFormula()) {
         data.MODIFIE_PAR = COMMENT_AUTHOR_PLACEHOLDER;
     }
 
@@ -5080,7 +5079,7 @@ async function mettreAJourDateTechnique(rowId) {
     }
 
     try {
-        await W.updateRecords(W.formatRecord(rowId, data));
+        await widget.updateRecords(widget.formatRecord(rowId, data));
         const record = trouverRecord(rowId);
         if (record) {
             Object.assign(record, data);
@@ -5093,23 +5092,23 @@ async function mettreAJourDateTechnique(rowId) {
 async function creerNouvelleTache(status) {
     try {
         const data = {DESCRIPTION: '', STATUT: status};
-        if (W.map?.DERNIERE_MISE_A_JOUR && !W.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
-        if (W.map?.CREE_LE && !W.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
-        if (W.map?.COMMENTAIRES && !W.col.COMMENTAIRES.getIsFormula()) data.COMMENTAIRES = '[]';
-        if (W.map?.CHECKLIST && !W.col.CHECKLIST.getIsFormula()) data.CHECKLIST = '[]';
-        if (W.map?.LIENS && !W.col.LIENS.getIsFormula()) data.LIENS = '[]';
-        if (W.map?.ORDRE && !W.col.ORDRE.getIsFormula()) data.ORDRE = prochainOrdrePourStatut(status);
+        if (widget.map?.DERNIERE_MISE_A_JOUR && !widget.col.DERNIERE_MISE_A_JOUR.getIsFormula()) data.DERNIERE_MISE_A_JOUR = new Date().toISOString();
+        if (widget.map?.CREE_LE && !widget.col.CREE_LE.getIsFormula()) data.CREE_LE = new Date().toISOString();
+        if (widget.map?.COMMENTAIRES && !widget.col.COMMENTAIRES.getIsFormula()) data.COMMENTAIRES = '[]';
+        if (widget.map?.CHECKLIST && !widget.col.CHECKLIST.getIsFormula()) data.CHECKLIST = '[]';
+        if (widget.map?.LIENS && !widget.col.LIENS.getIsFormula()) data.LIENS = '[]';
+        if (widget.map?.ORDRE && !widget.col.ORDRE.getIsFormula()) data.ORDRE = prochainOrdrePourStatut(status);
 
-        const result = await W.createRecords({fields: data});
+        const result = await widget.createRecords({fields: data});
         if (result?.id > 0) {
             grist.setCursorPos({rowId: result.id});
-            const record = await W.fetchSelectedRecord(result.id);
-            if (!W.opt.hideedit) {
+            const record = await widget.fetchSelectedRecord(result.id);
+            if (!widget.opt.hideedit) {
                 togglePopupTodo(record);
             }
         }
     } catch (error) {
-        console.error(T('Error on creation:'), error);
+        console.error(translate('Error on creation:'), error);
     }
 }
 
@@ -5150,7 +5149,7 @@ function ouvrirPopupArchivage(todoId, event) {
                         'Cette carte'
                     )} » sera déplacée dans la liste
                     <strong>${echapperHtml(
-                        valeurTexte(W.opt?.archivestatus).trim() ||
+                        valeurTexte(widget.opt?.archivestatus).trim() ||
                         'Archives'
                     )}</strong>.
                 </p>
@@ -5233,9 +5232,9 @@ async function confirmerArchivage(todoId, button, event) {
     }
 
     try {
-        const choices = await W.col.STATUT.getChoices();
+        const choices = await widget.col.STATUT.getChoices();
         const configuredStatus =
-            valeurTexte(W.opt?.archivestatus).trim() ||
+            valeurTexte(widget.opt?.archivestatus).trim() ||
             'Archives';
 
         const archiveStatus =
@@ -5244,13 +5243,13 @@ async function confirmerArchivage(todoId, button, event) {
             ) ||
             choices.find((choice) =>
                 valeurTexte(choice)
-                    .toLocaleLowerCase(W.cultureFull) ===
+                    .toLocaleLowerCase(widget.cultureFull) ===
                 configuredStatus
-                    .toLocaleLowerCase(W.cultureFull)
+                    .toLocaleLowerCase(widget.cultureFull)
             ) ||
             choices.find((choice) =>
                 valeurTexte(choice)
-                    .toLocaleLowerCase(W.cultureFull)
+                    .toLocaleLowerCase(widget.cultureFull)
                     .includes('archive')
             );
 
@@ -5266,16 +5265,16 @@ async function confirmerArchivage(todoId, button, event) {
         };
 
         if (
-            W.map?.ORDRE &&
-            !W.col.ORDRE.getIsFormula()
+            widget.map?.ORDRE &&
+            !widget.col.ORDRE.getIsFormula()
         ) {
             data.ORDRE = prochainOrdrePourStatut(
                 archiveStatus
             );
         }
 
-        await W.updateRecords(
-            W.formatRecord(todoId, data)
+        await widget.updateRecords(
+            widget.formatRecord(todoId, data)
         );
 
         const record = trouverRecord(todoId);
@@ -5285,7 +5284,7 @@ async function confirmerArchivage(todoId, button, event) {
 
         fermerPopupArchivage();
         fermerPopup();
-        await afficherKanban(RECS);
+        await afficherKanban(STATE.records);
     } catch (error) {
         console.error(
             'Impossible d’archiver la tâche :',
@@ -5396,7 +5395,7 @@ document.addEventListener('keydown', (event) => {
 
 document.addEventListener('click', (event) => {
     const openedDropdown = event.target.closest('.multi-dropdown, .checklist-assignees, .checklist-date-picker');
-    if (W?.opt?.autoclosemenus !== false) {
+    if (widget?.opt?.autoclosemenus !== false) {
         fermerTousLesMenusMultiples(openedDropdown);
     }
 
@@ -5423,7 +5422,7 @@ document.addEventListener('click', (event) => {
 // ========== HELPERS ==========
 
 function trouverRecord(rowId) {
-    return RECS.find((item) => Number(item.id) === Number(rowId)) || null;
+    return STATE.records.find((item) => Number(item.id) === Number(rowId)) || null;
 }
 
 function trouverCarteParId(rowId) {
@@ -5432,7 +5431,7 @@ function trouverCarteParId(rowId) {
 }
 
 function getColumnOption(index) {
-    const options = Array.isArray(W.opt?.columns) ? W.opt.columns : [];
+    const options = Array.isArray(widget.opt?.columns) ? widget.opt.columns : [];
     return {
         addbutton: false,
         isdone: false,
@@ -5443,7 +5442,7 @@ function getColumnOption(index) {
 }
 
 function getColumnOptionByStatus(status) {
-    const statuses = W.valuesList?.columns || [];
+    const statuses = widget.valuesList?.columns || [];
     const index = statuses.indexOf(status);
     return index >= 0 ? getColumnOption(index) : null;
 }
@@ -5453,7 +5452,7 @@ function getColumnStorageKey(status) {
 }
 
 function prochainOrdrePourStatut(status) {
-    const orders = RECS
+    const orders = STATE.records
         .filter((record) =>
             valeurTexte(record.STATUT) === valeurTexte(status)
         )
@@ -5478,7 +5477,7 @@ function obtenirIdsPersonnes(todo, mappingKey) {
         todo?.[mappingKey]
     ).filter((value) => value !== '#KeyError');
 
-    const available = [...RESPONSABLES];
+    const available = [...STATE.people.items];
 
     return labels.flatMap((label) => {
         const index = available.findIndex(
@@ -5502,7 +5501,7 @@ function obtenirPersonnes(todo, mappingKey) {
 
     if (ids.length > 0) {
         return ids
-            .map((id) => RESPONSABLES_BY_ID.get(id))
+            .map((id) => STATE.people.byId.get(id))
             .filter(Boolean);
     }
 
@@ -5544,7 +5543,7 @@ function obtenirIdsEtiquettes(todo) {
     }
 
     const labels = normaliserListeTexte(todo?.ETIQUETTES).filter((value) => value !== '#KeyError');
-    const available = [...ETIQUETTES];
+    const available = [...STATE.labels.items];
 
     return labels.flatMap((label) => {
         const index = available.findIndex((item) => item.label === label);
@@ -5557,7 +5556,7 @@ function obtenirIdsEtiquettes(todo) {
 function obtenirEtiquettes(todo) {
     const ids = obtenirIdsEtiquettes(todo);
     if (ids.length > 0) {
-        return ids.map((id) => ETIQUETTES_BY_ID.get(id)).filter(Boolean);
+        return ids.map((id) => STATE.labels.byId.get(id)).filter(Boolean);
     }
 
     return normaliserListeTexte(todo?.ETIQUETTES)
@@ -5622,8 +5621,8 @@ function valeurTexte(value) {
 function construireInfoCreation(todo) {
     const lines = [];
 
-    const createdDate = W.map?.CREE_LE && todo.CREE_LE ? formatDateTime(todo.CREE_LE) : '';
-    const createdBy = W.map?.CREE_PAR ? valeurTexte(todo.CREE_PAR).trim() : '';
+    const createdDate = widget.map?.CREE_LE && todo.CREE_LE ? formatDateTime(todo.CREE_LE) : '';
+    const createdBy = widget.map?.CREE_PAR ? valeurTexte(todo.CREE_PAR).trim() : '';
 
     if (createdDate || createdBy) {
         const createdParts = ['Créé'];
@@ -5632,10 +5631,10 @@ function construireInfoCreation(todo) {
         lines.push(`<div>${echapperHtml(createdParts.join(' '))}</div>`);
     }
 
-    const modifiedDate = W.map?.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR
+    const modifiedDate = widget.map?.DERNIERE_MISE_A_JOUR && todo.DERNIERE_MISE_A_JOUR
         ? formatDateTime(todo.DERNIERE_MISE_A_JOUR)
         : '';
-    const rawModifiedBy = W.map?.MODIFIE_PAR ? valeurTexte(todo.MODIFIE_PAR).trim() : '';
+    const rawModifiedBy = widget.map?.MODIFIE_PAR ? valeurTexte(todo.MODIFIE_PAR).trim() : '';
     const modifiedBy = rawModifiedBy === COMMENT_AUTHOR_PLACEHOLDER
         ? 'Nom Grist non configuré'
         : rawModifiedBy;
@@ -5664,7 +5663,7 @@ function formatDate(dateValue) {
     const date = new Date(dateValue);
     if (Number.isNaN(date.getTime()) || date >= DEADLINE_PRIORITE) return '';
     const day = String(date.getDate()).padStart(2, '0');
-    const month = date.toLocaleDateString(W.cultureFull, {month: 'short'});
+    const month = date.toLocaleDateString(widget.cultureFull, {month: 'short'});
     return `${day} ${month} ${date.getFullYear()}`;
 }
 
@@ -5685,7 +5684,7 @@ function formatDateChecklistCompact(dateValue) {
         return '';
     }
 
-    return date.toLocaleDateString(W.cultureFull, {
+    return date.toLocaleDateString(widget.cultureFull, {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric'
@@ -5696,7 +5695,7 @@ function formatDateTime(dateValue) {
     if (!dateValue) return '';
     const date = new Date(dateValue);
     if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString(W.cultureFull, {
+    return date.toLocaleString(widget.cultureFull, {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
@@ -5709,7 +5708,7 @@ function formatDateForInput(dateValue) {
     if (!dateValue) return '';
     const date = new Date(dateValue);
     if (Number.isNaN(date.getTime()) || date >= DEADLINE_PRIORITE) return '';
-    return date.toISOString().split('T')[0];
+    return date.toISOString().split('translate')[0];
 }
 
 function serialiserDate(value) {
