@@ -1,46 +1,141 @@
-// ========== KANBAN2 — VERSION 8.5 ==========
-// Sélecteur de date personnalisé, équipe instantanée et confirmation d’archivage.
+// ========== KANBAN2 — VERSION 9.0 ==========
+// Refonte technique complète : source modulaire, état centralisé et API publique minimale.
 // Compatible avec WidgetSDK 1.2.0.62.
 
-let W;
-let T;
+'use strict';
 
-const DEADLINE_PRIORITE = new Date('3000-01-01');
-const BACKCOLOR = '#DCDCDC';
-const TEXTCOLOR = '#000000';
-const ATTACHMENT_TOKEN_MAX_AGE = 2 * 60 * 1000;
-const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
-const COMMENT_AUTHOR_PLACEHOLDER = '__GRIST_USER_NAME__';
+let widget;
+let translate;
 
-let RECS = [];
-let RESPONSABLES = [];
-let RESPONSABLES_BY_ID = new Map();
-let RESPONSABLES_LOADED_FOR = null;
-let ETIQUETTES = [];
-let ETIQUETTES_BY_ID = new Map();
-let ETIQUETTES_LOADED_FOR = null;
-let ATTACHMENT_META = new Map();
-let ATTACHMENT_META_LOADED = false;
-let ATTACHMENT_READ_TOKEN = null;
-let ATTACHMENT_READ_TOKEN_AT = 0;
-const PEOPLE_SAVE_QUEUES = new Map();
-const LABEL_SAVE_QUEUES = new Map();
-const CHECKLIST_SAVE_QUEUES = new Map();
-const LINK_SAVE_QUEUES = new Map();
-const COMMENT_SAVE_QUEUES = new Map();
-const NOTES_SAVE_QUEUES = new Map();
-const NOTES_SAVE_TIMERS = new Map();
+/**
+ * État unique du widget. Aucune donnée métier n’est stockée dans le DOM.
+ */
+const STATE = {
+    records: [],
+    people: {
+        items: [],
+        byId: new Map(),
+        loadedFor: null
+    },
+    labels: {
+        items: [],
+        byId: new Map(),
+        loadedFor: null
+    },
+    attachments: {
+        meta: new Map(),
+        metaLoaded: false,
+        readToken: null,
+        readTokenAt: 0
+    },
+    notesTimers: new Map(),
+    config: {
+        saveTimer: null,
+        saving: false
+    }
+};
 
-let CONFIG_SAVE_TIMER = null;
-let CONFIG_SAVE_IN_PROGRESS = false;
+/** Files d’écriture sérialisées par ressource et par carte. */
+const SAVE_QUEUES = {
+    people: new Map(),
+    labels: new Map(),
+    checklists: new Map(),
+    links: new Map(),
+    comments: new Map(),
+    notes: new Map()
+};
+
+const ETIQUETTE_COLOR_PALETTE = Object.freeze({
+    'vert clair': {
+        background: '#BAF3DB',
+        text: '#000000'
+    },
+    'jaune clair': {
+        background: '#F5E989',
+        text: '#000000'
+    },
+    'orange clair': {
+        background: '#FCE4A6',
+        text: '#000000'
+    },
+    'rouge clair': {
+        background: '#FFD5D2',
+        text: '#000000'
+    },
+    'violet clair': {
+        background: '#EED7FC',
+        text: '#000000'
+    },
+    'bleu clair': {
+        background: '#CFE1FD',
+        text: '#000000'
+    },
+    'bleu ciel clair': {
+        background: '#C6EDFB',
+        text: '#000000'
+    },
+    'vert citron clair': {
+        background: '#D3F1A7',
+        text: '#000000'
+    },
+    'rose clair': {
+        background: '#FDD0EC',
+        text: '#000000'
+    },
+    'noir clair': {
+        background: '#DDDEE1',
+        text: '#000000'
+    },
+
+    'vert': {
+        background: '#4BCE97',
+        text: '#000000'
+    },
+    'jaune': {
+        background: '#EED12B',
+        text: '#000000'
+    },
+    'orange': {
+        background: '#FCA700',
+        text: '#000000'
+    },
+    'rouge': {
+        background: '#F87168',
+        text: '#000000'
+    },
+    'violet': {
+        background: '#C97CF4',
+        text: '#000000'
+    },
+    'bleu': {
+        background: '#669DF1',
+        text: '#000000'
+    },
+    'bleu ciel': {
+        background: '#6CC3E0',
+        text: '#000000'
+    },
+    'vert citron': {
+        background: '#94C748',
+        text: '#000000'
+    },
+    'rose': {
+        background: '#E774BB',
+        text: '#000000'
+    },
+    'noir': {
+        background: '#8C8F97',
+        text: '#000000'
+    }
+});
 
 // ========== INITIALISATION ==========
 
 window.addEventListener('load', async () => {
-    W = new WidgetSDK();
-    T = await W.loadTranslations(['widget.js']);
+    widget = new WidgetSDK();
+    translate = await widget.loadTranslations(['widget.js']);
 
-    W.configureOptions(
+    widget.configureOptions(
         [
             WidgetSDK.newItem(
                 'columns',
@@ -91,9 +186,9 @@ window.addEventListener('load', async () => {
         {onOptChange: optionsChanged, onOptLoad: optionsChanged}
     );
 
-    W.initMetaData();
+    widget.initMetaData();
 
-    W.ready({
+    widget.ready({
         requiredAccess: 'full',
         allowSelectBy: true,
         columns: [
@@ -119,14 +214,14 @@ window.addEventListener('load', async () => {
     });
 
     // mapRef:true fournit les libellés et les rowId pour MEMBRES, RESPONSABLE et ETIQUETTES.
-    W.onRecords(afficherKanban, {
+    widget.onRecords(afficherKanban, {
         expandRefs: false,
         keepEncoded: false,
         mapRef: true
     });
 
-    W.isLoaded().then(() => {
-        W.initDone = true;
+    widget.isLoaded().then(() => {
+        widget.initDone = true;
     });
 
     grist.on('message', async (event) => {
@@ -141,23 +236,23 @@ window.addEventListener('load', async () => {
 
 // ========== CHARGEMENT DES LISTES ==========
 
-async function chargerResponsables(force = false) {
-    const directoryMappingKey = W?.map?.MEMBRES
+async function chargerPersonnes(force = false) {
+    const directoryMappingKey = widget?.map?.MEMBRES
         ? 'MEMBRES'
-        : (W?.map?.RESPONSABLE ? 'RESPONSABLE' : null);
+        : (widget?.map?.RESPONSABLE ? 'RESPONSABLE' : null);
 
-    if (!directoryMappingKey || !W?.col?.[directoryMappingKey]) {
-        viderCacheResponsables();
+    if (!directoryMappingKey || !widget?.col?.[directoryMappingKey]) {
+        viderCachePersonnes();
         return;
     }
 
-    const colMeta = W.col[directoryMappingKey];
+    const colMeta = widget.col[directoryMappingKey];
     const cacheKey = `${directoryMappingKey}:${colMeta.type}:${colMeta.visibleCol}`;
 
     if (
         !force &&
-        RESPONSABLES_LOADED_FOR === cacheKey &&
-        RESPONSABLES.length > 0
+        STATE.people.loadedFor === cacheKey &&
+        STATE.people.items.length > 0
     ) {
         return;
     }
@@ -175,7 +270,7 @@ async function chargerResponsables(force = false) {
             ? reference.table[initialsColumnId]
             : [];
 
-        RESPONSABLES = reference.ids
+        STATE.people.items = reference.ids
             .map((rowId, index) => {
                 const label = valeurTexte(reference.labels[index]).trim();
                 const initials = nettoyerInitiales(initialsValues[index]) || calculerInitiales(label);
@@ -194,35 +289,35 @@ async function chargerResponsables(force = false) {
                 person.label !== '#KeyError'
             )
             .sort((a, b) =>
-                a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'})
+                a.label.localeCompare(b.label, widget.cultureFull, {sensitivity: 'base'})
             );
 
-        RESPONSABLES_BY_ID = new Map(
-            RESPONSABLES.map((person) => [person.id, person])
+        STATE.people.byId = new Map(
+            STATE.people.items.map((person) => [person.id, person])
         );
-        RESPONSABLES_LOADED_FOR = cacheKey;
+        STATE.people.loadedFor = cacheKey;
     } catch (error) {
-        viderCacheResponsables();
+        viderCachePersonnes();
         console.error('Impossible de charger la table des membres :', error);
     }
 }
 
-function viderCacheResponsables() {
-    RESPONSABLES = [];
-    RESPONSABLES_BY_ID = new Map();
-    RESPONSABLES_LOADED_FOR = null;
+function viderCachePersonnes() {
+    STATE.people.items = [];
+    STATE.people.byId = new Map();
+    STATE.people.loadedFor = null;
 }
 
 async function chargerEtiquettes(force = false) {
-    if (!W?.map?.ETIQUETTES || !W?.col?.ETIQUETTES) {
+    if (!widget?.map?.STATE.labels.items || !widget?.col?.STATE.labels.items) {
         viderCacheEtiquettes();
         return;
     }
 
-    const colMeta = W.col.ETIQUETTES;
+    const colMeta = widget.col.STATE.labels.items;
     const cacheKey = `${colMeta.type}:${colMeta.visibleCol}`;
 
-    if (!force && ETIQUETTES_LOADED_FOR === cacheKey && ETIQUETTES.length > 0) {
+    if (!force && STATE.labels.loadedFor === cacheKey && STATE.labels.items.length > 0) {
         return;
     }
 
@@ -238,23 +333,35 @@ async function chargerEtiquettes(force = false) {
             ? reference.table[colorColumnId]
             : [];
 
-        ETIQUETTES = reference.ids
+        STATE.labels.items = reference.ids
             .map((rowId, index) => {
                 const label = valeurTexte(reference.labels[index]).trim();
-                const explicitColor = normaliserCouleur(colorValues[index]);
-                const color = explicitColor || couleurEtiquetteParDefaut(label || rowId);
+                const colorChoice = valeurTexte(colorValues[index]).trim();
+                const paletteColor = obtenirCouleurEtiquetteDepuisChoix(
+                    colorChoice
+                );
+                const explicitHex = normaliserCouleur(colorChoice);
+                const color =
+                    paletteColor?.background ||
+                    explicitHex ||
+                    couleurEtiquetteParDefaut(label || rowId);
+                const textColor =
+                    paletteColor?.text ||
+                    couleurTexteContraste(color);
+
                 return {
                     id: Number(rowId),
                     label,
                     color,
-                    textColor: couleurTexteContraste(color)
+                    textColor,
+                    colorChoice
                 };
             })
             .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.label && item.label !== '#KeyError')
-            .sort((a, b) => a.label.localeCompare(b.label, W.cultureFull, {sensitivity: 'base'}));
+            .sort((a, b) => a.label.localeCompare(b.label, widget.cultureFull, {sensitivity: 'base'}));
 
-        ETIQUETTES_BY_ID = new Map(ETIQUETTES.map((item) => [item.id, item]));
-        ETIQUETTES_LOADED_FOR = cacheKey;
+        STATE.labels.byId = new Map(STATE.labels.items.map((item) => [item.id, item]));
+        STATE.labels.loadedFor = cacheKey;
     } catch (error) {
         viderCacheEtiquettes();
         console.error('Impossible de charger la table des étiquettes :', error);
@@ -262,9 +369,9 @@ async function chargerEtiquettes(force = false) {
 }
 
 function viderCacheEtiquettes() {
-    ETIQUETTES = [];
-    ETIQUETTES_BY_ID = new Map();
-    ETIQUETTES_LOADED_FOR = null;
+    STATE.labels.items = [];
+    STATE.labels.byId = new Map();
+    STATE.labels.loadedFor = null;
 }
 
 async function chargerTableReference(colMeta) {
@@ -348,6 +455,20 @@ function couleurAvatar(seed) {
     return `hsl(${hue} 58% 42%)`;
 }
 
+function normaliserNomCouleurEtiquette(value) {
+    return valeurTexte(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('fr-FR');
+}
+
+function obtenirCouleurEtiquetteDepuisChoix(value) {
+    const key = normaliserNomCouleurEtiquette(value);
+    return ETIQUETTE_COLOR_PALETTE[key] || null;
+}
+
 function couleurEtiquetteParDefaut(seed) {
     let hash = 0;
     for (const char of valeurTexte(seed)) {
@@ -386,12 +507,12 @@ function couleurTexteContraste(hexColor) {
 }
 
 async function chargerMetaPiecesJointes(force = false) {
-    if (ATTACHMENT_META_LOADED && !force) {
+    if (STATE.attachments.metaLoaded && !force) {
         return;
     }
 
-    ATTACHMENT_META = new Map();
-    ATTACHMENT_META_LOADED = true;
+    STATE.attachments.meta = new Map();
+    STATE.attachments.metaLoaded = true;
 
     try {
         const table = await grist.docApi.fetchTable('_grist_Attachments');
@@ -408,7 +529,7 @@ async function chargerMetaPiecesJointes(force = false) {
             const fileType = valeurTexte(table.fileType?.[index]);
             const fileSize = Number(table.fileSize?.[index]) || 0;
 
-            ATTACHMENT_META.set(id, {
+            STATE.attachments.meta.set(id, {
                 id,
                 fileName,
                 fileExt,
@@ -426,10 +547,10 @@ async function chargerMetaPiecesJointes(force = false) {
 // ========== RENDU DU KANBAN ==========
 
 async function afficherKanban(records) {
-    RECS = Array.isArray(records) ? records : [];
+    STATE.records = Array.isArray(records) ? records : [];
 
     await Promise.all([
-        chargerResponsables(),
+        chargerPersonnes(),
         chargerEtiquettes()
     ]);
 
@@ -440,9 +561,9 @@ async function afficherKanban(records) {
 
     container.innerHTML = '';
 
-    const statuses = await W.col.STATUT.getChoices();
+    const statuses = await widget.col.STATUT.getChoices();
     if (!Array.isArray(statuses) || statuses.length === 0) {
-        container.innerHTML = `<div class="kanban-message">${echapperHtml(T('No choice available in the Status column'))}</div>`;
+        container.innerHTML = `<div class="kanban-message">${echapperHtml(translate('No choice available in the Status column'))}</div>`;
         return;
     }
 
@@ -453,7 +574,7 @@ async function afficherKanban(records) {
         }
     });
 
-    RECS.forEach((todo) => {
+    STATE.records.forEach((todo) => {
         const status = valeurTexte(todo.STATUT);
         const target = Array.from(container.querySelectorAll('.contenu-colonne'))
             .find((column) => column.dataset.statut === status);
@@ -503,10 +624,10 @@ function installerSauvegardeAutomatiqueConfiguration() {
 }
 
 function planifierSauvegardeConfiguration() {
-    window.clearTimeout(CONFIG_SAVE_TIMER);
+    window.clearTimeout(STATE.config.saveTimer);
     afficherEtatSauvegardeConfiguration('saving', 'Sauvegarde…');
 
-    CONFIG_SAVE_TIMER = window.setTimeout(
+    STATE.config.saveTimer = window.setTimeout(
         sauvegarderConfigurationSansFermer,
         350
     );
@@ -514,27 +635,27 @@ function planifierSauvegardeConfiguration() {
 
 async function sauvegarderConfigurationSansFermer() {
     if (
-        CONFIG_SAVE_IN_PROGRESS ||
-        !W?._parameters ||
-        !W?._config ||
-        W._config.style.display === 'none'
+        STATE.config.saving ||
+        !widget?._parameters ||
+        !widget?._config ||
+        widget._config.style.display === 'none'
     ) {
         return;
     }
 
-    CONFIG_SAVE_IN_PROGRESS = true;
+    STATE.config.saving = true;
 
     try {
-        W.opt = await W.readOptionValues(
-            W._parameters,
-            W._config,
-            W.opt
+        widget.opt = await widget.readOptionValues(
+            widget._parameters,
+            widget._config,
+            widget.opt
         );
 
         // Même stockage Grist que le bouton « Appliquer » du WidgetSDK.
         await grist.widgetApi.setOption(
             'options',
-            JSON.parse(JSON.stringify(W.opt))
+            JSON.parse(JSON.stringify(widget.opt))
         );
 
         await optionsChanged();
@@ -553,7 +674,7 @@ async function sauvegarderConfigurationSansFermer() {
             'Échec de la sauvegarde'
         );
     } finally {
-        CONFIG_SAVE_IN_PROGRESS = false;
+        STATE.config.saving = false;
     }
 }
 
@@ -583,22 +704,22 @@ function afficherEtatSauvegardeConfiguration(state, message) {
 }
 
 async function optionsChanged() {
-    await W.isMapped();
-    await afficherKanban(RECS);
+    await widget.isMapped();
+    await afficherKanban(STATE.records);
 }
 
 async function mappingChanged() {
-    viderCacheResponsables();
+    viderCachePersonnes();
     viderCacheEtiquettes();
-    ATTACHMENT_META_LOADED = false;
-    ATTACHMENT_READ_TOKEN = null;
+    STATE.attachments.metaLoaded = false;
+    STATE.attachments.readToken = null;
 
     await Promise.all([
-        chargerResponsables(true),
+        chargerPersonnes(true),
         chargerEtiquettes(true)
     ]);
 
-    await afficherKanban(RECS);
+    await afficherKanban(STATE.records);
 }
 
 function creerColonneKanban(status, index) {
@@ -609,29 +730,29 @@ function creerColonneKanban(status, index) {
 
     const statusText = valeurTexte(status);
     const column = document.createElement('section');
-    column.className = `colonne-kanban${(!option.addbutton && !W.opt.compact) ? ' colonne-nobouton' : ''}`;
+    column.className = `colonne-kanban${(!option.addbutton && !widget.opt.compact) ? ' colonne-nobouton' : ''}`;
     column.id = statusText;
 
     if (localStorage.getItem(getColumnStorageKey(statusText)) === 'true') {
         column.classList.add('collapsed');
     }
 
-    const background = W.col.STATUT.getColor(statusText) ?? BACKCOLOR;
-    const color = W.col.STATUT.getTextColor(statusText) ?? TEXTCOLOR;
+    const background = widget.col.STATUT.getColor(statusText) ?? BACKCOLOR;
+    const color = widget.col.STATUT.getTextColor(statusText) ?? TEXTCOLOR;
     const encodedStatus = encoderAttribut(statusText);
 
     column.innerHTML = `
         <div class="entete-colonne" style="background-color:${background};color:${color}">
             <div class="titre-statut">${echapperHtml(statusText)} <span class="compteur-colonne">(0)</span></div>
             <div class="actions-colonne">
-                ${(option.addbutton && !W.opt.readonly)
-                    ? `<button type="button" class="bouton-ajouter-entete ${W.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))" aria-label="${echapperAttribut(T('Add a new task'))}">+</button>`
+                ${(option.addbutton && !widget.opt.readonly)
+                    ? `<button type="button" class="bouton-ajouter-entete ${widget.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))" aria-label="${echapperAttribut(translate('Add a new task'))}">+</button>`
                     : ''}
                 <button type="button" class="bouton-toggle" onclick="toggleColonne(this.closest('.colonne-kanban'), event)" aria-label="Replier ou déplier">⇄</button>
             </div>
         </div>
-        ${(option.addbutton && !W.opt.readonly)
-            ? `<button type="button" class="bouton-ajouter ${W.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))">+ ${echapperHtml(T('Add a new task'))}</button>`
+        ${(option.addbutton && !widget.opt.readonly)
+            ? `<button type="button" class="bouton-ajouter ${widget.opt.compact ? 'compact' : ''}" onclick="creerNouvelleTache(decodeURIComponent('${encodedStatus}'))">+ ${echapperHtml(translate('Add a new task'))}</button>`
             : ''}
         <div class="contenu-colonne" data-statut="${echapperAttribut(statusText)}" data-isdone="${option.isdone ? 'true' : 'false'}"></div>
     `;
@@ -641,8 +762,8 @@ function creerColonneKanban(status, index) {
 
 function creerCarteTodo(todo) {
     const card = document.createElement('article');
-    const rotateCards = W.opt.cardrotation === true;
-    card.className = `carte${rotateCards ? '' : ' norotate'}${W.opt.compact ? ' compact' : ''}`;
+    const rotateCards = widget.opt.cardrotation === true;
+    card.className = `carte${rotateCards ? '' : ' norotate'}${widget.opt.compact ? ' compact' : ''}`;
     card.dataset.todoId = String(todo.id);
     card.dataset.lastUpdate = serialiserDate(todo.DERNIERE_MISE_A_JOUR);
     card.dataset.deadline = serialiserDate(todo.DEADLINE);
@@ -663,7 +784,7 @@ function creerCarteTodo(todo) {
 
     const description = todo.DESCRIPTION_DISPLAY
         ? String(todo.DESCRIPTION_DISPLAY)
-        : echapperHtml(valeurTexte(todo.DESCRIPTION) || T('No description'));
+        : echapperHtml(valeurTexte(todo.DESCRIPTION) || translate('No description'));
 
     const labelsHtml = etiquettes
         .map((item) => construireBadgeEtiquette(item))
@@ -677,12 +798,12 @@ function creerCarteTodo(todo) {
         && deadlineTimestamp < Date.now()
         && deadlineTimestamp < DEADLINE_PRIORITE.getTime();
 
-    const showLabels = W.opt.showlabels !== false;
-    const showMembers = W.opt.showmembers !== false;
-    const showResponsables = W.opt.showresponsables !== false;
-    const showDeadline = W.opt.showdeadline !== false;
-    const showIndicators = W.opt.showindicators !== false;
-    const showChecklistProgress = W.opt.showchecklistprogress !== false;
+    const showLabels = widget.opt.showlabels !== false;
+    const showMembers = widget.opt.showmembers !== false;
+    const showResponsables = widget.opt.showresponsables !== false;
+    const showDeadline = widget.opt.showdeadline !== false;
+    const showIndicators = widget.opt.showindicators !== false;
+    const showChecklistProgress = widget.opt.showchecklistprogress !== false;
     const showTeam = (showMembers || showResponsables) && teamHtml;
 
     const indicatorsHtml = `
@@ -708,22 +829,22 @@ function creerCarteTodo(todo) {
                </div>`
             : ''}
         ${columnOption?.isdone
-            ? `<div class="tampon-termine" style="color:${W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${echapperHtml(valeurTexte(todo.STATUT))}</div>`
+            ? `<div class="tampon-termine" style="color:${widget.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR};">${echapperHtml(valeurTexte(todo.STATUT))}</div>`
             : ''}
     `;
 
     card.addEventListener('click', () => {
         grist.setCursorPos({rowId: todo.id});
-        if (!W.opt.hideedit) {
+        if (!widget.opt.hideedit) {
             togglePopupTodo(todo);
         }
     });
 
     card.addEventListener('dblclick', () => {
         grist.setCursorPos({rowId: todo.id});
-        if (W.opt.gristeditcard) {
+        if (widget.opt.gristeditcard) {
             grist.commandApi.run('viewAsCard');
-        } else if (!W.opt.hideedit) {
+        } else if (!widget.opt.hideedit) {
             togglePopupTodo(todo);
         }
     });
@@ -775,14 +896,14 @@ function construireBadgeEtiquette(item) {
         <span
             class="etiquette-badge"
             style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
-            title="${echapperAttribut(item.label)}"
+            title="${echapperAttribut(item.colorChoice ? `${item.label} — ${item.colorChoice}` : item.label)}"
         >${echapperHtml(item.label)}</span>
     `;
 }
 
 function appliquerCouleurCarte(card, rawColor) {
     const color = normaliserCouleur(rawColor)
-        || normaliserCouleur(W.opt?.defaultcardcolor)
+        || normaliserCouleur(widget.opt?.defaultcardcolor)
         || '#FFFFD1';
     card.style.backgroundColor = color;
 }
@@ -793,7 +914,7 @@ function initialiserTriEtGlisserDeposer() {
     document.querySelectorAll('.contenu-colonne').forEach((column) => {
         trierTodo(column);
 
-        if (W.opt.readonly || typeof Sortable !== 'function') {
+        if (widget.opt.readonly || typeof Sortable !== 'function') {
             return;
         }
 
@@ -823,8 +944,8 @@ function initialiserTriEtGlisserDeposer() {
                     }
 
                     if (
-                        W.map?.ORDRE &&
-                        !W.col.ORDRE.getIsFormula()
+                        widget.map?.ORDRE &&
+                        !widget.col.ORDRE.getIsFormula()
                     ) {
                         await sauvegarderOrdreListes(
                             targetIds,
@@ -842,8 +963,8 @@ function initialiserTriEtGlisserDeposer() {
                         }
                     }
                 } catch (error) {
-                    console.error(T('Error during status update:'), error);
-                    await afficherKanban(RECS);
+                    console.error(translate('Error during status update:'), error);
+                    await afficherKanban(STATE.records);
                 }
 
                 mettreAJourCompteur(event.to.closest('.colonne-kanban'));
@@ -878,8 +999,8 @@ async function sauvegarderOrdreListes(targetIds, sourceIds = []) {
 
 async function sauvegarderOrdreIds(ids) {
     if (
-        !W.map?.ORDRE ||
-        W.col.ORDRE.getIsFormula()
+        !widget.map?.ORDRE ||
+        widget.col.ORDRE.getIsFormula()
     ) {
         return;
     }
@@ -896,16 +1017,16 @@ async function sauvegarderOrdreIds(ids) {
             card.dataset.order = String(order);
         }
 
-        return W.formatRecord(rowId, {ORDRE: order});
+        return widget.formatRecord(rowId, {ORDRE: order});
     });
 
     if (records.length > 0) {
-        await W.updateRecords(records);
+        await widget.updateRecords(records);
     }
 }
 
 async function mettreAJourOrdreParDeadline(column) {
-    if (!W.map?.DEADLINE || !column) {
+    if (!widget.map?.DEADLINE || !column) {
         return;
     }
 
@@ -924,10 +1045,10 @@ async function mettreAJourOrdreParDeadline(column) {
         const deadline = `${year}-01-01`;
         year += 1;
         card.dataset.deadline = deadline;
-        return W.formatRecord(card.dataset.todoId, {DEADLINE: deadline});
+        return widget.formatRecord(card.dataset.todoId, {DEADLINE: deadline});
     });
 
-    await W.updateRecords(records);
+    await widget.updateRecords(records);
 }
 
 function trierTodo(container) {
@@ -941,10 +1062,10 @@ function trierTodo(container) {
     cards.sort((a, b) => {
         let delta = 0;
 
-        if (W.map?.ORDRE) {
+        if (widget.map?.ORDRE) {
             delta = ordreTriCarte(a.dataset.order)
                 - ordreTriCarte(b.dataset.order);
-        } else if (W.map?.DEADLINE) {
+        } else if (widget.map?.DEADLINE) {
             if (isDone) {
                 delta = toSortableTimestamp(b.dataset.lastUpdate, 0)
                     - toSortableTimestamp(a.dataset.lastUpdate, 0);
@@ -994,7 +1115,7 @@ async function togglePopupTodo(todo) {
         return;
     }
 
-    if (W.opt.readonly) {
+    if (widget.opt.readonly) {
         fermerPopup();
         return;
     }
@@ -1003,9 +1124,9 @@ async function togglePopupTodo(todo) {
     trouverCarteParId(todo.id)?.classList.add('active');
 
     const columnOption = getColumnOptionByStatus(todo.STATUT);
-    const statusChoices = await W.col.STATUT.getChoices();
-    const background = W.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR;
-    const color = W.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR;
+    const statusChoices = await widget.col.STATUT.getChoices();
+    const background = widget.col.STATUT.getColor(todo.STATUT) ?? BACKCOLOR;
+    const color = widget.col.STATUT.getTextColor(todo.STATUT) ?? TEXTCOLOR;
 
     popup.style.setProperty('--task-status-color', background);
     popup.style.setProperty('--task-status-text', color);
@@ -1027,17 +1148,17 @@ async function togglePopupTodo(todo) {
     if (closeButton) closeButton.style.color = '';
     if (!content) return;
 
-    const notesDisabled = W.map?.NOTES ? W.col.NOTES.getIsFormula() : false;
-    const descriptionDisabled = W.col.DESCRIPTION.getIsFormula();
+    const notesDisabled = widget.map?.NOTES ? widget.col.NOTES.getIsFormula() : false;
+    const descriptionDisabled = widget.col.DESCRIPTION.getIsFormula();
     const dynamicContent = construireContenuDynamiqueFiche(todo);
-    const metadata = W.opt.showmetadata !== false
+    const metadata = widget.opt.showmetadata !== false
         ? construireInfoCreation(todo)
         : '';
 
-    const notesHtml = W.map?.NOTES
+    const notesHtml = widget.map?.NOTES
         ? construireEditeurNotes(todo, notesDisabled)
         : '';
-    const commentsHtml = W.map?.COMMENTAIRES && W.opt.showcomments !== false
+    const commentsHtml = widget.map?.COMMENTAIRES && widget.opt.showcomments !== false
         ? construireSectionCommentaires(todo)
         : '';
 
@@ -1135,7 +1256,7 @@ async function togglePopupTodo(todo) {
     initialiserChecklistsSortables(content);
 
     if (
-        W.map?.PIECES_JOINTES &&
+        widget.map?.PIECES_JOINTES &&
         normaliserIdsListe(todo.PIECES_JOINTES).length > 0
     ) {
         await rafraichirPiecesJointes(todo.id);
@@ -1143,14 +1264,14 @@ async function togglePopupTodo(todo) {
 }
 
 function construireBarreActionsFiche(todo) {
-    const canChecklist = Boolean(W.map?.CHECKLIST && !W.col.CHECKLIST.getIsFormula());
+    const canChecklist = Boolean(widget.map?.CHECKLIST && !widget.col.CHECKLIST.getIsFormula());
     const canPeople = Boolean(
-        (W.map?.MEMBRES && !W.col.MEMBRES.getIsFormula()) ||
-        (W.map?.RESPONSABLE && !W.col.RESPONSABLE.getIsFormula())
+        (widget.map?.MEMBRES && !widget.col.MEMBRES.getIsFormula()) ||
+        (widget.map?.RESPONSABLE && !widget.col.RESPONSABLE.getIsFormula())
     );
     const canResources = Boolean(
-        (W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula()) ||
-        (W.map?.LIENS && !W.col.LIENS.getIsFormula())
+        (widget.map?.PIECES_JOINTES && !widget.col.PIECES_JOINTES.getIsFormula()) ||
+        (widget.map?.LIENS && !widget.col.LIENS.getIsFormula())
     );
 
     return `
@@ -1196,12 +1317,12 @@ function construireBarreActionsFiche(todo) {
 function construirePanneauxActionsFiche(todo) {
     const panels = [
         construireMenuAjouterFiche(todo),
-        W.map?.ETIQUETTES ? construirePanneauEtiquettesFiche(todo) : '',
-        W.map?.DEADLINE ? construirePanneauDateFiche(todo) : '',
-        W.map?.CHECKLIST ? construirePanneauNouvelleChecklist(todo) : '',
-        (W.map?.MEMBRES || W.map?.RESPONSABLE) ? construirePanneauPersonnesFiche(todo) : '',
-        (W.map?.PIECES_JOINTES || W.map?.LIENS) ? construirePanneauRessourcesFiche(todo) : '',
-        W.map?.COULEUR ? construirePanneauCouleurFiche(todo) : ''
+        widget.map?.STATE.labels.items ? construirePanneauEtiquettesFiche(todo) : '',
+        widget.map?.DEADLINE ? construirePanneauDateFiche(todo) : '',
+        widget.map?.CHECKLIST ? construirePanneauNouvelleChecklist(todo) : '',
+        (widget.map?.MEMBRES || widget.map?.RESPONSABLE) ? construirePanneauPersonnesFiche(todo) : '',
+        (widget.map?.PIECES_JOINTES || widget.map?.LIENS) ? construirePanneauRessourcesFiche(todo) : '',
+        widget.map?.COULEUR ? construirePanneauCouleurFiche(todo) : ''
     ].filter(Boolean).join('');
 
     return `
@@ -1214,22 +1335,22 @@ function construirePanneauxActionsFiche(todo) {
 function construireMenuAjouterFiche(todo) {
     const entries = [];
 
-    if (W.map?.ETIQUETTES) {
+    if (widget.map?.STATE.labels.items) {
         entries.push(['🏷️', 'Étiquettes', 'labels']);
     }
-    if (W.map?.DEADLINE) {
+    if (widget.map?.DEADLINE) {
         entries.push(['📅', 'Dates', 'date']);
     }
-    if (W.map?.CHECKLIST) {
+    if (widget.map?.CHECKLIST) {
         entries.push(['☑', 'Checklist', 'checklist']);
     }
-    if (W.map?.MEMBRES || W.map?.RESPONSABLE) {
+    if (widget.map?.MEMBRES || widget.map?.RESPONSABLE) {
         entries.push(['👥', 'Membres', 'people']);
     }
-    if (W.map?.PIECES_JOINTES || W.map?.LIENS) {
+    if (widget.map?.PIECES_JOINTES || widget.map?.LIENS) {
         entries.push(['📎', 'Pièce jointe', 'resources']);
     }
-    if (W.map?.COULEUR) {
+    if (widget.map?.COULEUR) {
         entries.push(['🎨', 'Couleur de carte', 'color']);
     }
 
@@ -1253,7 +1374,7 @@ function construireMenuAjouterFiche(todo) {
 
 function construirePanneauEtiquettesFiche(todo) {
     const selected = new Set(obtenirIdsEtiquettes(todo));
-    const disabled = W.col.ETIQUETTES.getIsFormula();
+    const disabled = widget.col.STATE.labels.items.getIsFormula();
 
     return `
         <section class="task-action-panel" data-panel="labels" hidden>
@@ -1265,8 +1386,8 @@ function construirePanneauEtiquettesFiche(todo) {
                 <input type="search" placeholder="Rechercher une étiquette…" oninput="filtrerPanneauFiche(this)">
             </div>
             <div class="task-panel-options" data-row-id="${Number(todo.id)}">
-                ${ETIQUETTES.map((item) => `
-                    <label class="task-check-option" data-search="${echapperAttribut(item.label.toLocaleLowerCase(W.cultureFull))}">
+                ${STATE.labels.items.map((item) => `
+                    <label class="task-check-option" data-search="${echapperAttribut(item.label.toLocaleLowerCase(widget.cultureFull))}">
                         <input
                             type="checkbox"
                             value="${item.id}"
@@ -1284,7 +1405,7 @@ function construirePanneauEtiquettesFiche(todo) {
 }
 
 function construirePanneauDateFiche(todo) {
-    const disabled = W.col.DEADLINE.getIsFormula();
+    const disabled = widget.col.DEADLINE.getIsFormula();
     return `
         <section class="task-action-panel" data-panel="date" hidden>
             <div class="task-panel-heading">
@@ -1310,7 +1431,7 @@ function construirePanneauDateFiche(todo) {
 }
 
 function construirePanneauNouvelleChecklist(todo) {
-    const disabled = W.col.CHECKLIST.getIsFormula();
+    const disabled = widget.col.CHECKLIST.getIsFormula();
     return `
         <section class="task-action-panel" data-panel="checklist" hidden>
             <div class="task-panel-heading">
@@ -1340,13 +1461,13 @@ function construirePanneauPersonnesFiche(todo) {
     const selectedMembers = new Set(obtenirIdsMembres(todo));
     const selectedResponsables = new Set(obtenirIdsResponsables(todo));
     const membersDisabled =
-        !W.map?.MEMBRES ||
-        W.col.MEMBRES.getIsFormula();
+        !widget.map?.MEMBRES ||
+        widget.col.MEMBRES.getIsFormula();
     const responsablesDisabled =
-        !W.map?.RESPONSABLE ||
-        W.col.RESPONSABLE.getIsFormula();
+        !widget.map?.RESPONSABLE ||
+        widget.col.RESPONSABLE.getIsFormula();
 
-    const orderedPeople = [...RESPONSABLES].sort((a, b) => {
+    const orderedPeople = [...STATE.people.items].sort((a, b) => {
         const rankA = selectedResponsables.has(a.id)
             ? 0
             : selectedMembers.has(a.id)
@@ -1362,7 +1483,7 @@ function construirePanneauPersonnesFiche(todo) {
             ? rankA - rankB
             : a.label.localeCompare(
                 b.label,
-                W.cultureFull,
+                widget.cultureFull,
                 {sensitivity: 'base'}
             );
     });
@@ -1415,7 +1536,7 @@ function construirePanneauPersonnesFiche(todo) {
                         <article
                             class="task-person-card${isMember || isResponsible ? ' is-selected' : ''}"
                             data-search="${echapperAttribut(
-                                person.label.toLocaleLowerCase(W.cultureFull)
+                                person.label.toLocaleLowerCase(widget.cultureFull)
                             )}"
                             data-person-name="${echapperAttribut(person.label)}"
                         >
@@ -1478,8 +1599,8 @@ function construirePanneauPersonnesFiche(todo) {
 }
 
 function construirePanneauRessourcesFiche(todo) {
-    const canFiles = Boolean(W.map?.PIECES_JOINTES && !W.col.PIECES_JOINTES.getIsFormula());
-    const canLinks = Boolean(W.map?.LIENS && !W.col.LIENS.getIsFormula());
+    const canFiles = Boolean(widget.map?.PIECES_JOINTES && !widget.col.PIECES_JOINTES.getIsFormula());
+    const canLinks = Boolean(widget.map?.LIENS && !widget.col.LIENS.getIsFormula());
 
     return `
         <section class="task-action-panel" data-panel="resources" hidden>
@@ -1530,8 +1651,8 @@ function construirePanneauRessourcesFiche(todo) {
 
 function construirePanneauCouleurFiche(todo) {
     const current = normaliserCouleur(todo.COULEUR);
-    const pickerValue = current || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
-    const disabled = W.col.COULEUR.getIsFormula();
+    const pickerValue = current || normaliserCouleur(widget.opt?.defaultcardcolor) || '#FFFFD1';
+    const disabled = widget.col.COULEUR.getIsFormula();
 
     return `
         <section class="task-action-panel" data-panel="color" hidden>
@@ -1601,7 +1722,7 @@ function construireContenuDynamiqueFiche(todo) {
     }
     if (
         (attachmentIds.length > 0 || links.length > 0) &&
-        W.opt.showattachments !== false
+        widget.opt.showattachments !== false
     ) {
         contextBlocks.push(
             construireSectionRessources(todo, attachmentIds, links)
@@ -1610,7 +1731,7 @@ function construireContenuDynamiqueFiche(todo) {
 
     return {
         context: contextBlocks.join(''),
-        checklists: checklists.length > 0 && W.opt.showchecklist !== false
+        checklists: checklists.length > 0 && widget.opt.showchecklist !== false
             ? construireSectionsChecklists(todo, checklists)
             : ''
     };
@@ -1627,7 +1748,7 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
                         style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
                     >
                         <span>${echapperHtml(item.label)}</span>
-                        ${W.col.ETIQUETTES.getIsFormula() ? '' : `
+                        ${widget.col.STATE.labels.items.getIsFormula() ? '' : `
                             <button
                                 type="button"
                                 onclick="retirerEtiquetteFiche(
@@ -1640,7 +1761,7 @@ function construireResumeEtiquettesFiche(todo, etiquettes) {
                         `}
                     </span>
                 `).join('')}
-                ${W.col.ETIQUETTES.getIsFormula() ? '' : `
+                ${widget.col.STATE.labels.items.getIsFormula() ? '' : `
                     <button
                         type="button"
                         class="task-compact-add task-label-inline-add"
@@ -1807,7 +1928,7 @@ function normaliserTexteRecherche(value) {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .trim()
-        .toLocaleLowerCase(W.cultureFull);
+        .toLocaleLowerCase(widget.cultureFull);
 }
 
 function filtrerPanneauFiche(input) {
@@ -1879,16 +2000,16 @@ async function changerStatutDepuisFiche(
         };
 
         if (
-            W.map?.ORDRE &&
-            !W.col.ORDRE.getIsFormula()
+            widget.map?.ORDRE &&
+            !widget.col.ORDRE.getIsFormula()
         ) {
             data.ORDRE = prochainOrdrePourStatut(newStatus);
         }
 
-        await W.updateRecords(W.formatRecord(rowId, data));
+        await widget.updateRecords(widget.formatRecord(rowId, data));
         Object.assign(record, data);
 
-        await afficherKanban(RECS);
+        await afficherKanban(STATE.records);
         await rafraichirFicheCourante(rowId);
     } catch (error) {
         console.error('Impossible de changer la liste de la carte :', error);
@@ -1902,7 +2023,7 @@ async function mettreAJourTitreFiche(rowId, input, event) {
     await mettreAJourChamp(rowId, 'DESCRIPTION', value, event);
     const cardDescription = trouverCarteParId(rowId)?.querySelector('.description');
     if (cardDescription) {
-        cardDescription.textContent = value || T('No description');
+        cardDescription.textContent = value || translate('No description');
     }
 }
 
@@ -1929,7 +2050,7 @@ async function enregistrerEtiquettesDepuisPanneau(rowId, panel, event) {
     const status = panel?.querySelector('.task-panel-status');
     const ids = Array.from(panel.querySelectorAll('input[type="checkbox"]:checked'))
         .map((input) => Number(input.value))
-        .filter((id) => ETIQUETTES_BY_ID.has(id));
+        .filter((id) => STATE.labels.byId.has(id));
 
     try {
         if (status) {
@@ -2059,7 +2180,7 @@ async function enregistrerEquipeInstantanement(rowId, panel) {
         .map((button) => Number(button.dataset.personId))
         .filter((id) =>
             Number.isInteger(id) &&
-            RESPONSABLES_BY_ID.has(id)
+            STATE.people.byId.has(id)
         );
 
     const responsableIds = Array.from(
@@ -2070,13 +2191,13 @@ async function enregistrerEquipeInstantanement(rowId, panel) {
         .map((button) => Number(button.dataset.personId))
         .filter((id) =>
             Number.isInteger(id) &&
-            RESPONSABLES_BY_ID.has(id)
+            STATE.people.byId.has(id)
         );
 
     const status = panel.querySelector('.task-panel-status');
     const queueKey = `team:${resolvedRowId}`;
     const previous =
-        PEOPLE_SAVE_QUEUES.get(queueKey) ||
+        SAVE_QUEUES.people.get(queueKey) ||
         Promise.resolve();
 
     if (status) {
@@ -2089,8 +2210,8 @@ async function enregistrerEquipeInstantanement(rowId, panel) {
         .catch(() => undefined)
         .then(async () => {
             if (
-                W.map?.MEMBRES &&
-                !W.col.MEMBRES.getIsFormula()
+                widget.map?.MEMBRES &&
+                !widget.col.MEMBRES.getIsFormula()
             ) {
                 await ecrireReferenceMultiple(
                     resolvedRowId,
@@ -2105,8 +2226,8 @@ async function enregistrerEquipeInstantanement(rowId, panel) {
             }
 
             if (
-                W.map?.RESPONSABLE &&
-                !W.col.RESPONSABLE.getIsFormula()
+                widget.map?.RESPONSABLE &&
+                !widget.col.RESPONSABLE.getIsFormula()
             ) {
                 await ecrireReferenceMultiple(
                     resolvedRowId,
@@ -2143,13 +2264,13 @@ async function enregistrerEquipeInstantanement(rowId, panel) {
         })
         .finally(() => {
             if (
-                PEOPLE_SAVE_QUEUES.get(queueKey) === next
+                SAVE_QUEUES.people.get(queueKey) === next
             ) {
-                PEOPLE_SAVE_QUEUES.delete(queueKey);
+                SAVE_QUEUES.people.delete(queueKey);
             }
         });
 
-    PEOPLE_SAVE_QUEUES.set(queueKey, next);
+    SAVE_QUEUES.people.set(queueKey, next);
     await next;
 }
 
@@ -2253,7 +2374,7 @@ function trierCartesPersonnesPanneau(panel) {
             : valeurTexte(a.dataset.personName)
                 .localeCompare(
                     valeurTexte(b.dataset.personName),
-                    W.cultureFull,
+                    widget.cultureFull,
                     {sensitivity: 'base'}
                 );
     });
@@ -2322,7 +2443,7 @@ async function mettreAJourCouleurFiche(rowId, value, source, event) {
         await mettreAJourChamp(rowId, 'COULEUR', color || null, event);
         const card = trouverCarteParId(rowId);
         if (card) {
-            card.style.backgroundColor = color || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
+            card.style.backgroundColor = color || normaliserCouleur(widget.opt?.defaultcardcolor) || '#FFFFD1';
         }
         await rafraichirFicheCourante(rowId, 'color');
     } catch (error) {
@@ -2333,6 +2454,7 @@ async function mettreAJourCouleurFiche(rowId, value, source, event) {
     }
 }
 
+// ========== NOTES ==========
 
 function construireEditeurNotes(todo, disabled) {
     const rowId = Number(todo.id);
@@ -2919,7 +3041,7 @@ async function enregistrerNotes(rowId, editor) {
 
     const resolvedRowId = Number(rowId);
     const sanitized = sanitiserHtmlNotes(editor.innerHTML).trim();
-    const previous = NOTES_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const previous = SAVE_QUEUES.notes.get(resolvedRowId) || Promise.resolve();
 
     setNotesStatus(resolvedRowId, 'saving', 'Enregistrement…');
 
@@ -2950,12 +3072,12 @@ async function enregistrerNotes(rowId, editor) {
             throw error;
         })
         .finally(() => {
-            if (NOTES_SAVE_QUEUES.get(resolvedRowId) === next) {
-                NOTES_SAVE_QUEUES.delete(resolvedRowId);
+            if (SAVE_QUEUES.notes.get(resolvedRowId) === next) {
+                SAVE_QUEUES.notes.delete(resolvedRowId);
             }
         });
 
-    NOTES_SAVE_QUEUES.set(resolvedRowId, next);
+    SAVE_QUEUES.notes.set(resolvedRowId, next);
     return next;
 }
 
@@ -2973,46 +3095,6 @@ function setNotesStatus(rowId, state, message) {
     status.textContent = message;
 }
 
-function construireChampCouleur(todo) {
-    const current = normaliserCouleur(todo.COULEUR);
-    const pickerValue = current || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
-    const disabled = W.col.COULEUR.getIsFormula();
-
-    return `
-        <div class="field color-field" data-row-id="${Number(todo.id)}">
-            <label class="field-label">Couleur de la carte</label>
-            <div class="color-picker-row">
-                <input
-                    type="color"
-                    class="color-picker"
-                    value="${echapperAttribut(pickerValue)}"
-                    oninput="previsualiserCouleur(${Number(todo.id)}, this.value, this)"
-                    onchange="mettreAJourCouleur(${Number(todo.id)}, this.value, this, event)"
-                    ${disabled ? 'disabled' : ''}
-                    aria-label="Choisir une couleur"
-                >
-                <input
-                    type="text"
-                    class="field-input color-value"
-                    value="${echapperAttribut(current || '')}"
-                    placeholder="#FFFFD1"
-                    maxlength="7"
-                    oninput="previsualiserCouleur(${Number(todo.id)}, this.value, this)"
-                    onchange="mettreAJourCouleur(${Number(todo.id)}, this.value, this, event)"
-                    ${disabled ? 'disabled' : ''}
-                >
-                <button
-                    type="button"
-                    class="color-reset"
-                    onclick="reinitialiserCouleur(this, event)"
-                    ${disabled ? 'disabled' : ''}
-                    title="Utiliser la couleur par défaut"
-                >Réinitialiser</button>
-            </div>
-            <div class="section-status color-status" aria-live="polite"></div>
-        </div>
-    `;
-}
 
 function normaliserCouleur(value) {
     const raw = valeurTexte(value).trim();
@@ -3050,344 +3132,12 @@ function previsualiserCouleur(rowId, value, source) {
     }
 }
 
-async function mettreAJourCouleur(rowId, value, source, event) {
-    event?.stopPropagation();
-
-    const field = source?.closest('.color-field');
-    const status = field?.querySelector('.color-status');
-    const raw = valeurTexte(value).trim();
-    const color = normaliserCouleur(raw);
-
-    if (raw && !color) {
-        if (status) {
-            status.className = 'section-status color-status error';
-            status.textContent = 'Utilisez un code hexadécimal, par exemple #FFFFD1.';
-        }
-        return;
-    }
-
-    try {
-        if (status) {
-            status.className = 'section-status color-status saving';
-            status.textContent = 'Enregistrement…';
-        }
-
-        await mettreAJourChamp(rowId, 'COULEUR', color || null, event);
-
-        const card = trouverCarteParId(rowId);
-        if (card) {
-            if (color) {
-                card.style.backgroundColor = color;
-            } else {
-                card.style.backgroundColor = normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
-            }
-        }
-
-        if (field) {
-            const picker = field.querySelector('.color-picker');
-            const text = field.querySelector('.color-value');
-            if (picker) picker.value = color || normaliserCouleur(W.opt?.defaultcardcolor) || '#FFFFD1';
-            if (text) text.value = color || '';
-        }
-
-        if (status) {
-            status.className = 'section-status color-status saved';
-            status.textContent = 'Enregistré';
-            window.setTimeout(() => {
-                status.className = 'section-status color-status';
-                status.textContent = '';
-            }, 1200);
-        }
-    } catch (error) {
-        if (status) {
-            status.className = 'section-status color-status error';
-            status.textContent = 'Impossible d’enregistrer la couleur.';
-        }
-        console.error('Erreur pendant l’enregistrement de la couleur :', error);
-    }
-}
-
-function reinitialiserCouleur(button, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const field = button.closest('.color-field');
-    const rowId = Number(field?.dataset?.rowId);
-    if (!field || !Number.isInteger(rowId) || rowId <= 0) {
-        return;
-    }
-
-    const text = field.querySelector('.color-value');
-    if (text) text.value = '';
-    mettreAJourCouleur(rowId, '', button, event);
-}
-
 // ========== MEMBRES, RESPONSABLES ET ÉTIQUETTES (REFLIST) ==========
 
-function construireChampPersonnes(
-    rowId,
-    selectedIds,
-    mappingKey,
-    title,
-    singularLabel,
-    pluralLabel,
-    disabled
-) {
-    const selection = new Set(
-        normaliserIdsRefList(selectedIds)
-    );
 
-    const options = RESPONSABLES.map((person) => `
-        <label
-            class="multi-option personne-option"
-            data-search="${echapperAttribut(
-                person.label
-                    .toLocaleLowerCase(W.cultureFull)
-            )}"
-        >
-            <input
-                type="checkbox"
-                value="${person.id}"
-                ${selection.has(person.id) ? 'checked' : ''}
-                onchange="mettreAJourChampPersonnes(
-                    ${Number(rowId)},
-                    '${echapperJs(mappingKey)}',
-                    this.closest('.multi-dropdown'),
-                    '${echapperJs(singularLabel)}',
-                    '${echapperJs(pluralLabel)}',
-                    event
-                )"
-                ${disabled ? 'disabled' : ''}
-            >
-            <span
-                class="responsable-option-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-            >${echapperHtml(person.initials)}</span>
-            <span class="responsable-option-name">
-                ${echapperHtml(person.label)}
-            </span>
-        </label>
-    `).join('');
 
-    const selectedLabels = [...selection]
-        .map((personId) => RESPONSABLES_BY_ID.get(personId)?.label)
-        .filter(Boolean);
 
-    return `
-        <div class="field field-responsables">
-            <label class="field-label">${echapperHtml(title)}</label>
-            <details
-                class="multi-dropdown personnes-dropdown"
-                data-row-id="${Number(rowId)}"
-                data-mapping-key="${echapperAttribut(mappingKey)}"
-            >
-                <summary>
-                    ${echapperHtml(
-                        resumePersonnes(
-                            selectedLabels,
-                            singularLabel,
-                            pluralLabel
-                        )
-                    )}
-                </summary>
-                <div class="multi-dropdown-menu">
-                    <div class="multi-toolbar">
-                        <input
-                            type="search"
-                            class="multi-search"
-                            placeholder="Rechercher…"
-                            oninput="filtrerOptionsMultiples(this)"
-                            onclick="event.stopPropagation()"
-                            ${disabled ? 'disabled' : ''}
-                        >
-                        <button
-                            type="button"
-                            class="multi-clear"
-                            onclick="viderChampPersonnes(
-                                this,
-                                '${echapperJs(mappingKey)}',
-                                '${echapperJs(singularLabel)}',
-                                '${echapperJs(pluralLabel)}',
-                                event
-                            )"
-                            ${disabled ? 'disabled' : ''}
-                        >Effacer</button>
-                    </div>
-                    <div class="multi-options">
-                        ${options || '<div class="multi-empty">Aucun membre disponible</div>'}
-                    </div>
-                    <div class="multi-status" aria-live="polite"></div>
-                </div>
-            </details>
-        </div>
-    `;
-}
 
-function resumePersonnes(labels, singularLabel, pluralLabel) {
-    const values = normaliserListeTexte(labels);
-
-    if (values.length === 0) return 'Choisir…';
-    if (values.length === 1) return values[0];
-
-    return `${values.length} ${pluralLabel || `${singularLabel}s`}`;
-}
-
-function filtrerOptionsMultiples(input) {
-    const dropdown = input.closest('.multi-dropdown');
-    if (!dropdown) return;
-
-    const query = input.value
-        .trim()
-        .toLocaleLowerCase(W.cultureFull);
-
-    dropdown.querySelectorAll('.multi-option').forEach((option) => {
-        const checkbox = option.querySelector('input[type="checkbox"]');
-        const hideSelected =
-            option.dataset.hideWhenSelected === 'true' &&
-            checkbox?.checked;
-
-        const hideForSearch =
-            query !== '' &&
-            !valeurTexte(option.dataset.search).includes(query);
-
-        option.hidden = Boolean(hideSelected || hideForSearch);
-    });
-
-    mettreAJourMessageOptionsEtiquettes(dropdown);
-}
-
-function viderChampPersonnes(
-    button,
-    mappingKey,
-    singularLabel,
-    pluralLabel,
-    event
-) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const dropdown = button.closest('.multi-dropdown');
-    if (!dropdown) return;
-
-    dropdown
-        .querySelectorAll('input[type="checkbox"]:checked')
-        .forEach((checkbox) => {
-            checkbox.checked = false;
-        });
-
-    mettreAJourChampPersonnes(
-        Number(dropdown.dataset.rowId),
-        mappingKey,
-        dropdown,
-        singularLabel,
-        pluralLabel,
-        event
-    );
-}
-
-async function mettreAJourChampPersonnes(
-    rowId,
-    mappingKey,
-    dropdown,
-    singularLabel,
-    pluralLabel,
-    event
-) {
-    event?.stopPropagation();
-
-    const resolvedRowId = Number(
-        rowId || dropdown?.dataset?.rowId
-    );
-
-    if (
-        !Number.isInteger(resolvedRowId) ||
-        resolvedRowId <= 0 ||
-        !dropdown
-    ) {
-        return;
-    }
-
-    const ids = Array.from(
-        dropdown.querySelectorAll(
-            'input[type="checkbox"]:checked'
-        )
-    )
-        .map((input) => Number(input.value))
-        .filter((id) =>
-            Number.isInteger(id) &&
-            id > 0 &&
-            RESPONSABLES_BY_ID.has(id)
-        );
-
-    const labels = ids
-        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
-        .filter(Boolean);
-
-    const summary = dropdown.querySelector('summary');
-    if (summary) {
-        summary.textContent = resumePersonnes(
-            labels,
-            singularLabel,
-            pluralLabel
-        );
-    }
-
-    setMultiStatus(
-        dropdown,
-        'saving',
-        'Enregistrement…'
-    );
-
-    const queueKey = `${mappingKey}:${resolvedRowId}`;
-    const previous =
-        PEOPLE_SAVE_QUEUES.get(queueKey) ||
-        Promise.resolve();
-
-    const next = previous
-        .catch(() => undefined)
-        .then(() =>
-            ecrireReferenceMultiple(
-                resolvedRowId,
-                mappingKey,
-                ids
-            )
-        )
-        .then(() => {
-            mettreAJourPersonnesLocales(
-                resolvedRowId,
-                mappingKey,
-                ids
-            );
-            setMultiStatus(
-                dropdown,
-                'saved',
-                'Enregistré'
-            );
-            window.setTimeout(
-                () => setMultiStatus(dropdown, '', ''),
-                1200
-            );
-        })
-        .catch((error) => {
-            setMultiStatus(
-                dropdown,
-                'error',
-                'Échec de l’enregistrement'
-            );
-            console.error(
-                `Erreur lors de l’enregistrement de ${mappingKey} :`,
-                error
-            );
-        })
-        .finally(() => {
-            if (PEOPLE_SAVE_QUEUES.get(queueKey) === next) {
-                PEOPLE_SAVE_QUEUES.delete(queueKey);
-            }
-        });
-
-    PEOPLE_SAVE_QUEUES.set(queueKey, next);
-    await next;
-}
 
 function mettreAJourPersonnesLocales(
     rowId,
@@ -3399,352 +3149,29 @@ function mettreAJourPersonnesLocales(
 
     record[`${mappingKey}_id`] = [...ids];
     record[mappingKey] = ids
-        .map((id) => RESPONSABLES_BY_ID.get(id)?.label)
+        .map((id) => STATE.people.byId.get(id)?.label)
         .filter(Boolean);
 }
 
-function construireChampEtiquettes(todo) {
-    const selectedIds = obtenirIdsEtiquettes(todo);
-    const selection = new Set(selectedIds);
-    const disabled = W.col.ETIQUETTES.getIsFormula();
 
-    const selectedItems = selectedIds
-        .map((id) => ETIQUETTES_BY_ID.get(id))
-        .filter(Boolean);
 
-    const options = ETIQUETTES.map((item) => `
-        <label
-            class="multi-option etiquette-option"
-            data-hide-when-selected="true"
-            data-search="${echapperAttribut(
-                item.label.toLocaleLowerCase(W.cultureFull)
-            )}"
-            ${selection.has(item.id) ? 'hidden' : ''}
-        >
-            <input
-                type="checkbox"
-                value="${item.id}"
-                ${selection.has(item.id) ? 'checked' : ''}
-                onchange="mettreAJourEtiquettes(
-                    ${Number(todo.id)},
-                    this.closest('.multi-dropdown'),
-                    event
-                )"
-                ${disabled ? 'disabled' : ''}
-            >
-            <span
-                class="etiquette-preview"
-                style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
-            >${echapperHtml(item.label)}</span>
-        </label>
-    `).join('');
 
-    return `
-        <div
-            class="field field-etiquettes"
-            data-row-id="${Number(todo.id)}"
-        >
-            <div class="etiquettes-field-header">
-                <label class="field-label">Étiquettes</label>
-                ${disabled ? '' : `
-                    <details
-                        class="multi-dropdown etiquettes-dropdown etiquettes-picker"
-                        data-row-id="${Number(todo.id)}"
-                    >
-                        <summary
-                            class="etiquettes-add-button"
-                            title="Ajouter une étiquette"
-                            aria-label="Ajouter une étiquette"
-                        >+</summary>
-                        <div class="multi-dropdown-menu">
-                            <div class="multi-toolbar">
-                                <input
-                                    type="search"
-                                    class="multi-search"
-                                    placeholder="Rechercher une étiquette…"
-                                    oninput="filtrerOptionsMultiples(this)"
-                                    onclick="event.stopPropagation()"
-                                >
-                                <button
-                                    type="button"
-                                    class="multi-clear"
-                                    onclick="viderEtiquettes(this, event)"
-                                >Tout retirer</button>
-                            </div>
-                            <div class="multi-options">
-                                ${options || '<div class="multi-empty">Ajoutez des lignes dans la table référencée par Étiquettes</div>'}
-                                <div class="multi-all-selected" hidden>
-                                    Toutes les étiquettes sont déjà actives.
-                                </div>
-                            </div>
-                            <div
-                                class="multi-status"
-                                aria-live="polite"
-                            ></div>
-                        </div>
-                    </details>
-                `}
-            </div>
 
-            <div class="etiquettes-actives">
-                ${construireEtiquettesActives(
-                    selectedItems,
-                    todo.id,
-                    disabled
-                )}
-            </div>
-        </div>
-    `;
-}
 
-function construireEtiquettesActives(
-    items,
-    rowId,
-    disabled
-) {
-    if (!items.length) {
-        return '<span class="etiquettes-empty">Aucune étiquette</span>';
-    }
 
-    return items.map((item) => `
-        <span
-            class="etiquette-active"
-            style="background:${echapperAttribut(item.color)};color:${echapperAttribut(item.textColor)}"
-            title="${echapperAttribut(item.label)}"
-        >
-            <span>${echapperHtml(item.label)}</span>
-            ${disabled ? '' : `
-                <button
-                    type="button"
-                    onclick="retirerEtiquetteActive(
-                        ${Number(rowId)},
-                        ${Number(item.id)},
-                        this,
-                        event
-                    )"
-                    title="Retirer ${echapperAttribut(item.label)}"
-                    aria-label="Retirer ${echapperAttribut(item.label)}"
-                >×</button>
-            `}
-        </span>
-    `).join('');
-}
-
-function viderEtiquettes(button, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const dropdown = button.closest('.multi-dropdown');
-    if (!dropdown) return;
-
-    dropdown
-        .querySelectorAll('input[type="checkbox"]:checked')
-        .forEach((checkbox) => {
-            checkbox.checked = false;
-        });
-
-    mettreAJourEtiquettes(
-        Number(dropdown.dataset.rowId),
-        dropdown,
-        event
-    );
-}
-
-function retirerEtiquetteActive(
-    rowId,
-    labelId,
-    button,
-    event
-) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const field = button.closest('.field-etiquettes');
-    const dropdown = field?.querySelector(
-        '.etiquettes-dropdown'
-    );
-
-    if (!dropdown) return;
-
-    const checkbox = dropdown.querySelector(
-        `input[type="checkbox"][value="${Number(labelId)}"]`
-    );
-
-    if (checkbox) {
-        checkbox.checked = false;
-    }
-
-    mettreAJourEtiquettes(
-        Number(rowId),
-        dropdown,
-        event
-    );
-}
-
-async function mettreAJourEtiquettes(
-    rowId,
-    dropdown,
-    event
-) {
-    event?.stopPropagation();
-
-    const resolvedRowId = Number(
-        rowId || dropdown?.dataset?.rowId
-    );
-
-    if (
-        !Number.isInteger(resolvedRowId) ||
-        resolvedRowId <= 0 ||
-        !dropdown
-    ) {
-        return;
-    }
-
-    const ids = Array.from(
-        dropdown.querySelectorAll(
-            'input[type="checkbox"]:checked'
-        )
-    )
-        .map((input) => Number(input.value))
-        .filter((id) =>
-            Number.isInteger(id) &&
-            id > 0 &&
-            ETIQUETTES_BY_ID.has(id)
-        );
-
-    mettreAJourAffichageEtiquettes(
-        dropdown,
-        resolvedRowId,
-        ids
-    );
-    setMultiStatus(
-        dropdown,
-        'saving',
-        'Enregistrement…'
-    );
-
-    const previous =
-        LABEL_SAVE_QUEUES.get(resolvedRowId) ||
-        Promise.resolve();
-
-    const next = previous
-        .catch(() => undefined)
-        .then(() =>
-            ecrireReferenceMultiple(
-                resolvedRowId,
-                'ETIQUETTES',
-                ids
-            )
-        )
-        .then(() => {
-            mettreAJourEtiquettesLocales(
-                resolvedRowId,
-                ids
-            );
-            setMultiStatus(
-                dropdown,
-                'saved',
-                'Enregistré'
-            );
-            window.setTimeout(
-                () => setMultiStatus(dropdown, '', ''),
-                1200
-            );
-        })
-        .catch((error) => {
-            setMultiStatus(
-                dropdown,
-                'error',
-                'Échec de l’enregistrement'
-            );
-            console.error(
-                'Erreur lors de l’enregistrement des étiquettes :',
-                error
-            );
-        })
-        .finally(() => {
-            if (
-                LABEL_SAVE_QUEUES.get(resolvedRowId) === next
-            ) {
-                LABEL_SAVE_QUEUES.delete(resolvedRowId);
-            }
-        });
-
-    LABEL_SAVE_QUEUES.set(resolvedRowId, next);
-    await next;
-}
-
-function mettreAJourAffichageEtiquettes(
-    dropdown,
-    rowId,
-    ids
-) {
-    const field = dropdown.closest('.field-etiquettes');
-    const activeContainer = field?.querySelector(
-        '.etiquettes-actives'
-    );
-    const selected = new Set(ids);
-    const items = ids
-        .map((id) => ETIQUETTES_BY_ID.get(id))
-        .filter(Boolean);
-
-    if (activeContainer) {
-        activeContainer.innerHTML =
-            construireEtiquettesActives(
-                items,
-                rowId,
-                false
-            );
-    }
-
-    dropdown
-        .querySelectorAll('.etiquette-option')
-        .forEach((option) => {
-            const checkbox = option.querySelector(
-                'input[type="checkbox"]'
-            );
-            const checked = selected.has(
-                Number(checkbox?.value)
-            );
-
-            if (checkbox) {
-                checkbox.checked = checked;
-            }
-            option.hidden = checked;
-        });
-
-    mettreAJourMessageOptionsEtiquettes(dropdown);
-}
-
-function mettreAJourMessageOptionsEtiquettes(dropdown) {
-    if (!dropdown?.classList.contains('etiquettes-dropdown')) {
-        return;
-    }
-
-    const message = dropdown.querySelector(
-        '.multi-all-selected'
-    );
-    const visibleOptions = Array.from(
-        dropdown.querySelectorAll('.etiquette-option')
-    ).filter((option) => !option.hidden);
-
-    if (message) {
-        message.hidden = visibleOptions.length > 0;
-    }
-}
 
 function mettreAJourEtiquettesLocales(rowId, ids) {
     const record = trouverRecord(rowId);
     if (!record) return;
 
     record.ETIQUETTES_id = [...ids];
-    record.ETIQUETTES = ids
-        .map((id) => ETIQUETTES_BY_ID.get(id)?.label)
+    record.STATE.labels.items = ids
+        .map((id) => STATE.labels.byId.get(id)?.label)
         .filter(Boolean);
 }
 
 async function ecrireReferenceMultiple(rowId, mappingKey, ids) {
-    const actualColumnId = W.map?.[mappingKey];
+    const actualColumnId = widget.map?.[mappingKey];
     if (!actualColumnId || Array.isArray(actualColumnId)) {
         throw new Error(`La colonne ${mappingKey} n’est pas correctement mappée.`);
     }
@@ -3806,14 +3233,6 @@ function memeListeIds(expected, actual) {
     const left = [...new Set(expected.map(Number))].sort((a, b) => a - b);
     const right = [...new Set(actual.map(Number))].sort((a, b) => a - b);
     return left.length === right.length && left.every((id, index) => id === right[index]);
-}
-
-function setMultiStatus(dropdown, state, message) {
-    const status = dropdown?.querySelector('.multi-status');
-    if (!status) return;
-
-    status.className = `multi-status${state ? ` ${state}` : ''}`;
-    status.textContent = message;
 }
 
 // ========== CHECKLISTS TITRÉES ========== 
@@ -3887,7 +3306,7 @@ function construireSectionsChecklists(todo, checklists = parserChecklists(todo.C
         return '';
     }
 
-    const disabled = W.col.CHECKLIST.getIsFormula();
+    const disabled = widget.col.CHECKLIST.getIsFormula();
     return `
         <div class="checklists-stack" data-row-id="${Number(todo.id)}">
             ${checklists.map((checklist) => construireBlocChecklist(checklist, todo.id, disabled)).join('')}
@@ -4018,7 +3437,7 @@ function construireBlocChecklist(checklist, rowId, disabled) {
 
 function construireItemChecklist(item, checklistId, rowId, disabled) {
     const assignedPeople = item.memberIds
-        .map((id) => RESPONSABLES_BY_ID.get(id))
+        .map((id) => STATE.people.byId.get(id))
         .filter(Boolean);
 
     const overdue =
@@ -4301,8 +3720,8 @@ function construireAssignationItemChecklist(item, checklistId, rowId, assignedPe
                     <input type="search" class="multi-search" placeholder="Rechercher…" oninput="filtrerOptionsChecklist(this)" onclick="event.stopPropagation()">
                 </div>
                 <div class="multi-options">
-                    ${RESPONSABLES.map((person) => `
-                        <label class="multi-option checklist-person-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(W.cultureFull))}">
+                    ${STATE.people.items.map((person) => `
+                        <label class="multi-option checklist-person-option" data-search="${echapperAttribut(person.label.toLocaleLowerCase(widget.cultureFull))}">
                             <input
                                 type="checkbox"
                                 value="${person.id}"
@@ -4334,7 +3753,7 @@ function construireResumeAssignationChecklist(people) {
 
 function filtrerOptionsChecklist(input) {
     const details = input.closest('.checklist-assignees');
-    const query = input.value.trim().toLocaleLowerCase(W.cultureFull);
+    const query = input.value.trim().toLocaleLowerCase(widget.cultureFull);
     details?.querySelectorAll('.checklist-person-option').forEach((option) => {
         option.hidden = query !== '' && !valeurTexte(option.dataset.search).includes(query);
     });
@@ -4469,7 +3888,7 @@ async function mettreAJourAssignationsItemChecklist(rowId, checklistId, itemId, 
     event?.stopPropagation();
     const memberIds = Array.from(details.querySelectorAll('input[type="checkbox"]:checked'))
         .map((input) => Number(input.value))
-        .filter((id) => RESPONSABLES_BY_ID.has(id));
+        .filter((id) => STATE.people.byId.has(id));
 
     await enregistrerChecklistsEnFile(rowId, (checklists) =>
         checklists.map((checklist) => checklist.id === checklistId
@@ -4484,7 +3903,7 @@ async function mettreAJourAssignationsItemChecklist(rowId, checklistId, itemId, 
         )
     );
 
-    const people = memberIds.map((id) => RESPONSABLES_BY_ID.get(id)).filter(Boolean);
+    const people = memberIds.map((id) => STATE.people.byId.get(id)).filter(Boolean);
     const summary = details.querySelector('summary');
     if (summary) {
         summary.innerHTML = construireResumeAssignationChecklist(people);
@@ -4530,7 +3949,7 @@ async function supprimerChecklist(rowId, checklistId, event) {
 
 async function enregistrerChecklistsEnFile(rowId, transform) {
     const resolvedRowId = Number(rowId);
-    const previous = CHECKLIST_SAVE_QUEUES.get(resolvedRowId) || Promise.resolve();
+    const previous = SAVE_QUEUES.checklists.get(resolvedRowId) || Promise.resolve();
 
     const next = previous
         .catch(() => undefined)
@@ -4546,12 +3965,12 @@ async function enregistrerChecklistsEnFile(rowId, transform) {
             return updated;
         })
         .finally(() => {
-            if (CHECKLIST_SAVE_QUEUES.get(resolvedRowId) === next) {
-                CHECKLIST_SAVE_QUEUES.delete(resolvedRowId);
+            if (SAVE_QUEUES.checklists.get(resolvedRowId) === next) {
+                SAVE_QUEUES.checklists.delete(resolvedRowId);
             }
         });
 
-    CHECKLIST_SAVE_QUEUES.set(resolvedRowId, next);
+    SAVE_QUEUES.checklists.set(resolvedRowId, next);
     return next;
 }
 
@@ -4567,7 +3986,7 @@ function rafraichirBlocChecklist(rowId, checklistId, checklists = null) {
     }
 
     const wrapper = document.createElement('div');
-    wrapper.innerHTML = construireBlocChecklist(checklist, rowId, W.col.CHECKLIST.getIsFormula());
+    wrapper.innerHTML = construireBlocChecklist(checklist, rowId, widget.col.CHECKLIST.getIsFormula());
     const replacement = wrapper.firstElementChild;
     current.replaceWith(replacement);
     replacement.querySelectorAll('.auto-expand').forEach(ajusterTextarea);
@@ -4584,7 +4003,7 @@ function afficherStatutChecklist(rowId, checklistId, state, message) {
 }
 
 function initialiserChecklistsSortables(root = document) {
-    if (typeof Sortable !== 'function' || W.opt.readonly) {
+    if (typeof Sortable !== 'function' || widget.opt.readonly) {
         return;
     }
 
@@ -6375,73 +5794,60 @@ function triggerConfetti() {
     }, 250);
 }
 
-// ========== EXPORTS POUR LES ATTRIBUTS HTML ==========
+// ========== API PUBLIQUE POUR LES ATTRIBUTS HTML ==========
 
-window.toggleColonne = toggleColonne;
-window.togglePopupTodo = togglePopupTodo;
-window.fermerPopup = fermerPopup;
-window.mettreAJourChamp = mettreAJourChamp;
-window.creerNouvelleTache = creerNouvelleTache;
-window.ouvrirPopupArchivage = ouvrirPopupArchivage;
-window.fermerPopupArchivage = fermerPopupArchivage;
-window.confirmerArchivage = confirmerArchivage;
-window.mettreAJourChampPersonnes = mettreAJourChampPersonnes;
-window.filtrerOptionsMultiples = filtrerOptionsMultiples;
-window.viderChampPersonnes = viderChampPersonnes;
-window.mettreAJourEtiquettes = mettreAJourEtiquettes;
-window.viderEtiquettes = viderEtiquettes;
-window.retirerEtiquetteActive = retirerEtiquetteActive;
-
-window.ouvrirPanneauFiche = ouvrirPanneauFiche;
-window.fermerPanneauxFiche = fermerPanneauxFiche;
-window.filtrerPanneauFiche = filtrerPanneauFiche;
-window.changerStatutDepuisFiche = changerStatutDepuisFiche;
-window.mettreAJourTitreFiche = mettreAJourTitreFiche;
-window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
-window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;
-window.retirerEtiquetteFiche = retirerEtiquetteFiche;
-window.basculerRolePersonnePanneau = basculerRolePersonnePanneau;
-window.mettreAJourDateChecklistDepuisMenu = mettreAJourDateChecklistDepuisMenu;
-window.definirDateChecklistRapide = definirDateChecklistRapide;
-window.effacerDateChecklist = effacerDateChecklist;
-window.gererCreationChecklistClavier = gererCreationChecklistClavier;
-window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
-window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
-
-window.ouvrirAjoutItemChecklist = ouvrirAjoutItemChecklist;
-window.fermerAjoutItemChecklist = fermerAjoutItemChecklist;
-window.gererAjoutItemChecklistClavier = gererAjoutItemChecklistClavier;
-window.ajouterItemChecklist = ajouterItemChecklist;
-window.renommerChecklist = renommerChecklist;
-window.mettreAJourItemChecklist = mettreAJourItemChecklist;
-window.mettreAJourAssignationsItemChecklist = mettreAJourAssignationsItemChecklist;
-window.supprimerItemChecklist = supprimerItemChecklist;
-window.supprimerChecklist = supprimerChecklist;
-window.filtrerOptionsChecklist = filtrerOptionsChecklist;
-
-window.ajouterLienFiche = ajouterLienFiche;
-window.retirerLienFiche = retirerLienFiche;
-window.declencherSelecteurPiecesJointes = declencherSelecteurPiecesJointes;
-window.ajouterPiecesJointes = ajouterPiecesJointes;
-window.retirerPieceJointe = retirerPieceJointe;
-window.ouvrirPieceJointe = ouvrirPieceJointe;
-window.fermerLecteurPieceJointe = fermerLecteurPieceJointe;
-window.ajouterCommentaire = ajouterCommentaire;
-window.supprimerCommentaire = supprimerCommentaire;
-window.ajusterTextarea = ajusterTextarea;
-window.previsualiserCouleur = previsualiserCouleur;
-window.mettreAJourCouleur = mettreAJourCouleur;
-window.reinitialiserCouleur = reinitialiserCouleur;
-
-window.activerEditionNotes = activerEditionNotes;
-window.annulerEditionNotes = annulerEditionNotes;
-window.enregistrerEtFermerNotes = enregistrerEtFermerNotes;
-window.appliquerFormatBlocNotes = appliquerFormatBlocNotes;
-window.appliquerCommandeNotes = appliquerCommandeNotes;
-window.appliquerBaliseSelectionNotes = appliquerBaliseSelectionNotes;
-window.creerLienNotes = creerLienNotes;
-window.nettoyerCollageNotes = nettoyerCollageNotes;
-window.marquerNotesModifiees = marquerNotesModifiees;
-window.mettreAJourEtatBarreNotes = mettreAJourEtatBarreNotes;
-window.gererRaccourcisNotes = gererRaccourcisNotes;
-
+Object.assign(window, {
+    activerEditionNotes,
+    ajouterChecklistAvecTitre,
+    ajouterCommentaire,
+    ajouterItemChecklist,
+    ajouterLienFiche,
+    ajouterPiecesJointes,
+    ajusterTextarea,
+    annulerEditionNotes,
+    appliquerBaliseSelectionNotes,
+    appliquerCommandeNotes,
+    appliquerFormatBlocNotes,
+    basculerRolePersonnePanneau,
+    changerStatutDepuisFiche,
+    confirmerArchivage,
+    creerLienNotes,
+    creerNouvelleTache,
+    declencherSelecteurPiecesJointes,
+    definirDateChecklistRapide,
+    effacerDateChecklist,
+    enregistrerEtFermerNotes,
+    enregistrerEtiquettesDepuisPanneau,
+    fermerAjoutItemChecklist,
+    fermerLecteurPieceJointe,
+    fermerPanneauxFiche,
+    fermerPopup,
+    fermerPopupArchivage,
+    filtrerOptionsChecklist,
+    filtrerPanneauFiche,
+    gererAjoutItemChecklistClavier,
+    gererCreationChecklistClavier,
+    gererRaccourcisNotes,
+    marquerNotesModifiees,
+    mettreAJourAssignationsItemChecklist,
+    mettreAJourCouleurFiche,
+    mettreAJourDateChecklistDepuisMenu,
+    mettreAJourEtatBarreNotes,
+    mettreAJourItemChecklist,
+    mettreAJourProprieteFiche,
+    mettreAJourTitreFiche,
+    nettoyerCollageNotes,
+    ouvrirAjoutItemChecklist,
+    ouvrirPanneauFiche,
+    ouvrirPieceJointe,
+    ouvrirPopupArchivage,
+    previsualiserCouleur,
+    renommerChecklist,
+    retirerEtiquetteFiche,
+    retirerLienFiche,
+    retirerPieceJointe,
+    supprimerChecklist,
+    supprimerCommentaire,
+    supprimerItemChecklist,
+    toggleColonne
+});

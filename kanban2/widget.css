@@ -1,4 +1,4 @@
-/* ========== KANBAN2 — VERSION 8.5 ========== */
+/* ========== KANBAN2 — VERSION 9.0 ========== */
 
 :root {
     --border-radius: 6px;
@@ -83,7 +83,6 @@ label {
 .config.visible {
     display: flex;
 }
-
 
 /* ========== CONFIGURATION ========== */
 
@@ -1076,7 +1075,6 @@ label {
     background: var(--danger);
 }
 
-
 /* ========== SÉLECTEUR DE COULEUR ========== */
 
 .color-picker-row {
@@ -1349,7 +1347,6 @@ label {
     color: var(--danger);
 }
 
-
 /* ========== ÉTIQUETTES ACTIVES ========== */
 
 .etiquettes-field-header {
@@ -1503,7 +1500,6 @@ label {
     color: var(--text-muted);
     font-size: 0.75rem;
 }
-
 
 /* ========== CHECKLIST ========== */
 
@@ -2446,7 +2442,8 @@ label {
 }
 
 /* ========================================================================== */
-/* KANBAN2 V7 — BASE CONSERVÉE                                                */
+
+/* FICHE — STRUCTURE ET COMPOSANTS                                                */
 /* ========================================================================== */
 
 .popup {
@@ -3376,7 +3373,8 @@ label {
 }
 
 /* ========================================================================== */
-/* KANBAN2 V8 — FICHE RESPONSIVE INSPIRÉE DES OUTILS DE GESTION DE CARTES     */
+
+/* FICHE — LAYOUT RESPONSIVE     */
 /* ========================================================================== */
 
 .popup {
@@ -4445,7 +4443,8 @@ label {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.1 — CORRECTIFS UX                                               */
+
+/* UX — TYPOGRAPHIE, MENUS ET ÉQUIPE                                               */
 /* ========================================================================== */
 
 :root {
@@ -4881,7 +4880,7 @@ summary {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.2 — MÉTADONNÉES COMPACTES ET CHECKLISTS ALLÉGÉES                */
+/* UX — MÉTADONNÉES COMPACTES ET CHECKLISTS                */
 /* ========================================================================== */
 
 .task-inline-context {
@@ -5412,7 +5411,7 @@ button.task-compact-meta:hover {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.3 — ÉQUIPE SIMPLIFIÉE ET CHECKLIST ALIGNÉE                      */
+/* UX — PANNEAU ÉQUIPE ET ALIGNEMENTS                      */
 /* ========================================================================== */
 
 /* Réduction nette de l'espace entre le titre et les boutons. */
@@ -5693,7 +5692,7 @@ button.task-compact-meta:hover {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.3.1 — CORRECTIF DU SÉLECTEUR DE DATE                            */
+/* UX — SÉLECTEUR DE DATE NATIF                            */
 /* ========================================================================== */
 
 .checklist-inline-date {
@@ -5727,7 +5726,7 @@ button.task-compact-meta:hover {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.3.2 — ARCHIVAGE DES CARTES                                      */
+/* UX — ARCHIVAGE                                      */
 /* ========================================================================== */
 
 .bouton-supprimer {
@@ -5774,7 +5773,7 @@ button.task-compact-meta:hover {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.4 — STATUT, RECHERCHE ET DATES CHECKLIST                        */
+/* UX — STATUT, RECHERCHE ET DATES                        */
 /* ========================================================================== */
 
 .task-status-selector {
@@ -5903,7 +5902,7 @@ button.task-compact-meta:hover {
 
 
 /* ========================================================================== */
-/* KANBAN2 V8.5 — DATES, ÉQUIPE INSTANTANÉE ET ARCHIVAGE                      */
+/* UX — INTERACTIONS FINALES                      */
 /* ========================================================================== */
 
 /* Équipe : sélection instantanée, sans barre de validation. */
