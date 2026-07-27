@@ -1,5 +1,5 @@
-// ========== KANBAN2 — VERSION 8.4 ==========
-// Dates de checklist, équipe, recherche et changement de liste corrigés.
+// ========== KANBAN2 — VERSION 8.5 ==========
+// Sélecteur de date personnalisé, équipe instantanée et confirmation d’archivage.
 // Compatible avec WidgetSDK 1.2.0.62.
 
 let W;
@@ -72,13 +72,6 @@ window.addEventListener('load', async () => {
             WidgetSDK.newItem('showchecklist', true, 'Checklist', 'Afficher la checklist avancée dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showattachments', true, 'Pièces jointes', 'Afficher la section des pièces jointes dans la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('showcomments', true, 'Commentaires', 'Afficher la section des commentaires dans la fiche.', '3 — Fiche descriptive'),
-            WidgetSDK.newItem(
-                'enablementions',
-                true,
-                'Mentions @ visuelles',
-                'Permettre de mentionner les membres dans les commentaires. Cette version ne déclenche aucun e-mail automatique.',
-                '3 — Fiche descriptive'
-            ),
             WidgetSDK.newItem('showmetadata', true, 'Informations de suivi', 'Afficher les lignes « Créé le » et « Modifié le » en bas de la fiche.', '3 — Fiche descriptive'),
             WidgetSDK.newItem('autoclosemenus', true, 'Fermer les menus automatiquement', 'Fermer les sélecteurs multiples lorsqu’on clique ailleurs.', '3 — Fiche descriptive'),
 
@@ -178,34 +171,19 @@ async function chargerResponsables(force = false) {
             ['initiales', 'initiale', 'initials', 'abreviation', 'abréviation', 'sigle']
         ) || colonneSuivante(dataColumns, reference.visibleColumnId);
 
-        const emailColumnId = trouverColonneParNoms(
-            dataColumns,
-            [
-                'email', 'e-mail', 'mail', 'courriel',
-                'adresseemail', 'adresse_email',
-                'adressemail', 'adresse_mail'
-            ]
-        );
-
         const initialsValues = initialsColumnId && Array.isArray(reference.table[initialsColumnId])
             ? reference.table[initialsColumnId]
-            : [];
-
-        const emailValues = emailColumnId && Array.isArray(reference.table[emailColumnId])
-            ? reference.table[emailColumnId]
             : [];
 
         RESPONSABLES = reference.ids
             .map((rowId, index) => {
                 const label = valeurTexte(reference.labels[index]).trim();
                 const initials = nettoyerInitiales(initialsValues[index]) || calculerInitiales(label);
-                const email = normaliserEmail(emailValues[index]);
 
                 return {
                     id: Number(rowId),
                     label,
                     initials,
-                    email,
                     avatarColor: couleurAvatar(label || rowId)
                 };
             })
@@ -1142,7 +1120,7 @@ async function togglePopupTodo(todo) {
                 <button
                     type="button"
                     class="popup-action-button bouton-archiver"
-                    onclick="archiverTodo(${Number(todo.id)}, event)"
+                    onclick="ouvrirPopupArchivage(${Number(todo.id)}, event)"
                     title="Archiver la tâche"
                     aria-label="Archiver la tâche"
                 >🗃️</button>
@@ -1368,6 +1346,27 @@ function construirePanneauPersonnesFiche(todo) {
         !W.map?.RESPONSABLE ||
         W.col.RESPONSABLE.getIsFormula();
 
+    const orderedPeople = [...RESPONSABLES].sort((a, b) => {
+        const rankA = selectedResponsables.has(a.id)
+            ? 0
+            : selectedMembers.has(a.id)
+                ? 1
+                : 2;
+        const rankB = selectedResponsables.has(b.id)
+            ? 0
+            : selectedMembers.has(b.id)
+                ? 1
+                : 2;
+
+        return rankA !== rankB
+            ? rankA - rankB
+            : a.label.localeCompare(
+                b.label,
+                W.cultureFull,
+                {sensitivity: 'base'}
+            );
+    });
+
     return `
         <section
             class="task-action-panel task-people-panel"
@@ -1379,8 +1378,8 @@ function construirePanneauPersonnesFiche(todo) {
                 <div>
                     <strong>Équipe de la carte</strong>
                     <span>
-                        Sélectionnez simplement le rôle de chaque personne,
-                        puis enregistrez.
+                        Les changements sont enregistrés dès que vous cliquez
+                        sur un rôle.
                     </span>
                 </div>
                 <button
@@ -1408,82 +1407,72 @@ function construirePanneauPersonnesFiche(todo) {
             </div>
 
             <div class="task-people-roster">
-                ${RESPONSABLES.map((person) => `
-                    <article
-                        class="task-person-card"
-                        data-search="${echapperAttribut(
-                            `${person.label} ${person.email || ''}`
-                                .toLocaleLowerCase(W.cultureFull)
-                        )}"
-                    >
-                        <div class="task-person-identity">
-                            <span
-                                class="task-person-avatar"
-                                style="background:${echapperAttribut(person.avatarColor)}"
-                            >${echapperHtml(person.initials)}</span>
+                ${orderedPeople.map((person) => {
+                    const isMember = selectedMembers.has(person.id);
+                    const isResponsible = selectedResponsables.has(person.id);
 
-                            <span class="task-person-copy">
-                                <strong>${echapperHtml(person.label)}</strong>
-                                ${person.email
-                                    ? `<small>${echapperHtml(person.email)}</small>`
-                                    : ''
-                                }
-                            </span>
-                        </div>
-
-                        <div
-                            class="task-person-role-actions"
-                            aria-label="Rôles de ${echapperAttribut(person.label)}"
+                    return `
+                        <article
+                            class="task-person-card${isMember || isResponsible ? ' is-selected' : ''}"
+                            data-search="${echapperAttribut(
+                                person.label.toLocaleLowerCase(W.cultureFull)
+                            )}"
+                            data-person-name="${echapperAttribut(person.label)}"
                         >
-                            <button
-                                type="button"
-                                class="task-person-role-button task-person-role-member${selectedMembers.has(person.id) ? ' active' : ''}"
-                                data-role="MEMBRES"
-                                data-person-id="${person.id}"
-                                aria-pressed="${selectedMembers.has(person.id) ? 'true' : 'false'}"
-                                onclick="basculerRolePersonnePanneau(this, event)"
-                                ${membersDisabled ? 'disabled' : ''}
-                            >
-                                <span aria-hidden="true">👤</span>
-                                <strong>Membre</strong>
-                            </button>
+                            <div class="task-person-identity">
+                                <span
+                                    class="task-person-avatar"
+                                    style="background:${echapperAttribut(person.avatarColor)}"
+                                >${echapperHtml(person.initials)}</span>
 
-                            <button
-                                type="button"
-                                class="task-person-role-button task-person-role-responsable${selectedResponsables.has(person.id) ? ' active' : ''}"
-                                data-role="RESPONSABLE"
-                                data-person-id="${person.id}"
-                                aria-pressed="${selectedResponsables.has(person.id) ? 'true' : 'false'}"
-                                onclick="basculerRolePersonnePanneau(this, event)"
-                                ${responsablesDisabled ? 'disabled' : ''}
+                                <span class="task-person-copy">
+                                    <strong>${echapperHtml(person.label)}</strong>
+                                </span>
+                            </div>
+
+                            <div
+                                class="task-person-role-actions"
+                                aria-label="Rôles de ${echapperAttribut(person.label)}"
                             >
-                                <span aria-hidden="true">◆</span>
-                                <strong>Responsable</strong>
-                            </button>
-                        </div>
-                    </article>
-                `).join('') || `
+                                <button
+                                    type="button"
+                                    class="task-person-role-button task-person-role-member${isMember ? ' active' : ''}"
+                                    data-role="MEMBRES"
+                                    data-person-id="${person.id}"
+                                    aria-pressed="${isMember ? 'true' : 'false'}"
+                                    onclick="basculerRolePersonnePanneau(this, event)"
+                                    ${membersDisabled ? 'disabled' : ''}
+                                >
+                                    <span aria-hidden="true">👤</span>
+                                    <strong>Membre</strong>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="task-person-role-button task-person-role-responsable${isResponsible ? ' active' : ''}"
+                                    data-role="RESPONSABLE"
+                                    data-person-id="${person.id}"
+                                    aria-pressed="${isResponsible ? 'true' : 'false'}"
+                                    onclick="basculerRolePersonnePanneau(this, event)"
+                                    ${responsablesDisabled ? 'disabled' : ''}
+                                >
+                                    <span aria-hidden="true">◆</span>
+                                    <strong>Responsable</strong>
+                                </button>
+                            </div>
+                        </article>
+                    `;
+                }).join('') || `
                     <div class="section-empty">
                         Aucune personne disponible dans la table Membres.
                     </div>
                 `}
             </div>
 
-            <div class="task-people-panel-footer">
-                <div
-                    class="task-panel-status section-status"
-                    aria-live="polite"
-                ></div>
-                <button
-                    type="button"
-                    class="task-people-save-button"
-                    onclick="enregistrerEquipeDepuisPanneau(
-                        ${Number(todo.id)},
-                        this,
-                        event
-                    )"
-                >Enregistrer l’équipe</button>
-            </div>
+            <div
+                class="task-panel-status task-people-live-status section-status"
+                aria-live="polite"
+            ></div>
         </section>
     `;
 }
@@ -1776,6 +1765,11 @@ function ouvrirPanneauFiche(panelName, event, forceOpen = false) {
     if (!isAlreadyOpen || forceOpen) {
         target.hidden = false;
         popup.classList.add('task-panel-open');
+
+        if (panelName === 'people') {
+            trierCartesPersonnesPanneau(target);
+        }
+
         const trigger = popup.querySelector(
             `[data-panel-trigger="${panelName}"]`
         );
@@ -1963,7 +1957,7 @@ async function retirerEtiquetteFiche(rowId, labelId, event) {
     await rafraichirFicheCourante(rowId);
 }
 
-function basculerRolePersonnePanneau(button, event) {
+async function basculerRolePersonnePanneau(button, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
@@ -1972,6 +1966,7 @@ function basculerRolePersonnePanneau(button, event) {
     }
 
     const panel = button.closest('.task-action-panel');
+    const card = button.closest('.task-person-card');
     const personId = Number(button.dataset.personId);
     const role = valeurTexte(button.dataset.role);
     const active = !button.classList.contains('active');
@@ -1986,6 +1981,11 @@ function basculerRolePersonnePanneau(button, event) {
     definirEtatBoutonRole(button, active);
 
     if (role === 'RESPONSABLE') {
+        /*
+         * Responsable et membre évoluent ensemble :
+         * cocher Responsable ajoute aussi Membre ;
+         * décocher Responsable retire aussi Membre.
+         */
         definirEtatBoutonRole(memberButton, active);
     } else if (
         role === 'MEMBRES' &&
@@ -1995,7 +1995,17 @@ function basculerRolePersonnePanneau(button, event) {
         definirEtatBoutonRole(responsableButton, false);
     }
 
+    const selected = Boolean(
+        memberButton?.classList.contains('active') ||
+        responsableButton?.classList.contains('active')
+    );
+    card?.classList.toggle('is-selected', selected);
+
     mettreAJourCompteursEquipePanneau(panel);
+    await enregistrerEquipeInstantanement(
+        Number(panel?.dataset.rowId),
+        panel
+    );
 }
 
 function definirEtatBoutonRole(button, active) {
@@ -2004,7 +2014,10 @@ function definirEtatBoutonRole(button, active) {
     }
 
     button.classList.toggle('active', Boolean(active));
-    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    button.setAttribute(
+        'aria-pressed',
+        active ? 'true' : 'false'
+    );
 }
 
 function mettreAJourCompteursEquipePanneau(panel) {
@@ -2029,29 +2042,21 @@ function mettreAJourCompteursEquipePanneau(panel) {
     });
 }
 
-async function enregistrerEquipeDepuisPanneau(
-    rowId,
-    button,
-    event
-) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const panel = button?.closest('.task-action-panel');
-    const status = panel?.querySelector('.task-panel-status');
-
-    if (!panel) {
+async function enregistrerEquipeInstantanement(rowId, panel) {
+    if (
+        !Number.isInteger(Number(rowId)) ||
+        !panel
+    ) {
         return;
     }
 
+    const resolvedRowId = Number(rowId);
     const memberIds = Array.from(
         panel.querySelectorAll(
             '.task-person-role-button[data-role="MEMBRES"].active'
         )
     )
-        .map((roleButton) =>
-            Number(roleButton.dataset.personId)
-        )
+        .map((button) => Number(button.dataset.personId))
         .filter((id) =>
             Number.isInteger(id) &&
             RESPONSABLES_BY_ID.has(id)
@@ -2062,78 +2067,198 @@ async function enregistrerEquipeDepuisPanneau(
             '.task-person-role-button[data-role="RESPONSABLE"].active'
         )
     )
-        .map((roleButton) =>
-            Number(roleButton.dataset.personId)
-        )
+        .map((button) => Number(button.dataset.personId))
         .filter((id) =>
             Number.isInteger(id) &&
             RESPONSABLES_BY_ID.has(id)
         );
 
-    button.disabled = true;
+    const status = panel.querySelector('.task-panel-status');
+    const queueKey = `team:${resolvedRowId}`;
+    const previous =
+        PEOPLE_SAVE_QUEUES.get(queueKey) ||
+        Promise.resolve();
 
-    try {
-        if (status) {
-            status.className =
-                'task-panel-status section-status saving';
-            status.textContent = 'Enregistrement…';
-        }
-
-        if (
-            W.map?.MEMBRES &&
-            !W.col.MEMBRES.getIsFormula()
-        ) {
-            await ecrireReferenceMultiple(
-                rowId,
-                'MEMBRES',
-                memberIds
-            );
-            mettreAJourPersonnesLocales(
-                rowId,
-                'MEMBRES',
-                memberIds
-            );
-        }
-
-        if (
-            W.map?.RESPONSABLE &&
-            !W.col.RESPONSABLE.getIsFormula()
-        ) {
-            await ecrireReferenceMultiple(
-                rowId,
-                'RESPONSABLE',
-                responsableIds
-            );
-            mettreAJourPersonnesLocales(
-                rowId,
-                'RESPONSABLE',
-                responsableIds
-            );
-        }
-
-        if (status) {
-            status.className =
-                'task-panel-status section-status saved';
-            status.textContent = 'Équipe enregistrée.';
-        }
-
-        fermerPanneauxFiche();
-        await rafraichirFicheCourante(rowId);
-    } catch (error) {
-        console.error(
-            'Impossible d’enregistrer l’équipe :',
-            error
-        );
-
-        if (status) {
-            status.className =
-                'task-panel-status section-status error';
-            status.textContent =
-                'Impossible d’enregistrer l’équipe.';
-        }
-    } finally {
-        button.disabled = false;
+    if (status) {
+        status.className =
+            'task-panel-status task-people-live-status section-status saving';
+        status.textContent = 'Enregistrement…';
     }
+
+    const next = previous
+        .catch(() => undefined)
+        .then(async () => {
+            if (
+                W.map?.MEMBRES &&
+                !W.col.MEMBRES.getIsFormula()
+            ) {
+                await ecrireReferenceMultiple(
+                    resolvedRowId,
+                    'MEMBRES',
+                    memberIds
+                );
+                mettreAJourPersonnesLocales(
+                    resolvedRowId,
+                    'MEMBRES',
+                    memberIds
+                );
+            }
+
+            if (
+                W.map?.RESPONSABLE &&
+                !W.col.RESPONSABLE.getIsFormula()
+            ) {
+                await ecrireReferenceMultiple(
+                    resolvedRowId,
+                    'RESPONSABLE',
+                    responsableIds
+                );
+                mettreAJourPersonnesLocales(
+                    resolvedRowId,
+                    'RESPONSABLE',
+                    responsableIds
+                );
+            }
+
+            mettreAJourResumeEquipeCompact(resolvedRowId);
+
+            if (status?.isConnected) {
+                status.className =
+                    'task-panel-status task-people-live-status section-status saved';
+                status.textContent = 'Équipe enregistrée.';
+            }
+        })
+        .catch((error) => {
+            console.error(
+                'Impossible d’enregistrer l’équipe :',
+                error
+            );
+
+            if (status?.isConnected) {
+                status.className =
+                    'task-panel-status task-people-live-status section-status error';
+                status.textContent =
+                    'Impossible d’enregistrer l’équipe.';
+            }
+        })
+        .finally(() => {
+            if (
+                PEOPLE_SAVE_QUEUES.get(queueKey) === next
+            ) {
+                PEOPLE_SAVE_QUEUES.delete(queueKey);
+            }
+        });
+
+    PEOPLE_SAVE_QUEUES.set(queueKey, next);
+    await next;
+}
+
+function mettreAJourResumeEquipeCompact(rowId) {
+    const record = trouverRecord(rowId);
+    const shell = document.querySelector(
+        `.task-detail-shell[data-row-id="${Number(rowId)}"]`
+    );
+
+    if (!record || !shell) {
+        return;
+    }
+
+    const membres = obtenirMembres(record);
+    const responsables = obtenirResponsables(record);
+    const current = shell.querySelector('.task-compact-team');
+
+    if (membres.length === 0 && responsables.length === 0) {
+        current?.remove();
+        return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML =
+        construireResumePersonnesFiche(
+            record,
+            membres,
+            responsables
+        );
+    const replacement = wrapper.firstElementChild;
+
+    if (current) {
+        current.replaceWith(replacement);
+        return;
+    }
+
+    let inlineContext = shell.querySelector(
+        '.task-inline-context'
+    );
+
+    if (!inlineContext) {
+        inlineContext = document.createElement('div');
+        inlineContext.className = 'task-inline-context';
+
+        const mainColumn = shell.querySelector(
+            '.task-main-column-full'
+        );
+        mainColumn?.before(inlineContext);
+    }
+
+    let grid = inlineContext.querySelector(
+        '.task-property-grid'
+    );
+
+    if (!grid) {
+        grid = document.createElement('div');
+        grid.className = 'task-property-grid';
+        inlineContext.prepend(grid);
+    }
+
+    grid.appendChild(replacement);
+}
+
+function trierCartesPersonnesPanneau(panel) {
+    const roster = panel?.querySelector(
+        '.task-people-roster'
+    );
+
+    if (!roster) {
+        return;
+    }
+
+    const cards = Array.from(
+        roster.querySelectorAll('.task-person-card')
+    );
+
+    cards.sort((a, b) => {
+        const rank = (card) => {
+            if (
+                card.querySelector(
+                    '.task-person-role-responsable.active'
+                )
+            ) {
+                return 0;
+            }
+            if (
+                card.querySelector(
+                    '.task-person-role-member.active'
+                )
+            ) {
+                return 1;
+            }
+            return 2;
+        };
+
+        const rankA = rank(a);
+        const rankB = rank(b);
+
+        return rankA !== rankB
+            ? rankA - rankB
+            : valeurTexte(a.dataset.personName)
+                .localeCompare(
+                    valeurTexte(b.dataset.personName),
+                    W.cultureFull,
+                    {sensitivity: 'base'}
+                );
+    });
+
+    cards.forEach((card) => roster.appendChild(card));
 }
 
 function gererCreationChecklistClavier(rowId, input, event) {
@@ -3016,7 +3141,7 @@ function construireChampPersonnes(
         <label
             class="multi-option personne-option"
             data-search="${echapperAttribut(
-                `${person.label} ${person.email || ''}`
+                person.label
                     .toLocaleLowerCase(W.cultureFull)
             )}"
         >
@@ -3954,38 +4079,14 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
             >${echapperHtml(item.text)}</textarea>
 
             <div class="checklist-item-actions">
-                <label
-                    class="checklist-inline-date${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
-                    title="${echapperAttribut(dateTitle)}"
-                >
-                    <span
-                        class="checklist-inline-date-button"
-                        aria-hidden="true"
-                    >
-                        <span class="checklist-inline-date-emoji">📅</span>
-                        ${item.dueDate
-                            ? `<span class="checklist-inline-date-value">${echapperHtml(formatDateChecklistCompact(item.dueDate))}</span>`
-                            : ''
-                        }
-                    </span>
-
-                    <input
-                        type="date"
-                        class="checklist-inline-date-input"
-                        value="${echapperAttribut(item.dueDate)}"
-                        aria-label="${echapperAttribut(dateTitle)}"
-                        onchange="mettreAJourItemChecklist(
-                            ${Number(rowId)},
-                            '${echapperJs(checklistId)}',
-                            '${echapperJs(item.id)}',
-                            'dueDate',
-                            this.value,
-                            this,
-                            event
-                        )"
-                        ${disabled ? 'disabled' : ''}
-                    >
-                </label>
+                ${construireDateItemChecklist(
+                    item,
+                    checklistId,
+                    rowId,
+                    disabled,
+                    overdue,
+                    dateTitle
+                )}
 
                 ${construireAssignationItemChecklist(
                     item,
@@ -4012,6 +4113,176 @@ function construireItemChecklist(item, checklistId, rowId, disabled) {
             </div>
         </article>
     `;
+}
+
+function construireDateItemChecklist(
+    item,
+    checklistId,
+    rowId,
+    disabled,
+    overdue,
+    dateTitle
+) {
+    const summary = `
+        <span class="checklist-date-summary-icon" aria-hidden="true">📅</span>
+        ${item.dueDate
+            ? `<span class="checklist-date-summary-value">${echapperHtml(
+                formatDateChecklistCompact(item.dueDate)
+            )}</span>`
+            : ''
+        }
+    `;
+
+    if (disabled) {
+        return `
+            <div
+                class="checklist-date-picker readonly${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
+                title="${echapperAttribut(dateTitle)}"
+            >
+                <span class="checklist-date-summary">${summary}</span>
+            </div>
+        `;
+    }
+
+    return `
+        <details
+            class="checklist-date-picker${overdue ? ' overdue' : ''}${item.dueDate ? ' has-date' : ''}"
+        >
+            <summary
+                class="checklist-date-summary"
+                title="${echapperAttribut(dateTitle)}"
+                aria-label="${echapperAttribut(dateTitle)}"
+            >${summary}</summary>
+
+            <div
+                class="checklist-date-menu"
+                onclick="event.stopPropagation()"
+            >
+                <label class="checklist-date-field">
+                    <span>Date limite</span>
+                    <input
+                        type="date"
+                        value="${echapperAttribut(item.dueDate)}"
+                        onchange="mettreAJourDateChecklistDepuisMenu(
+                            ${Number(rowId)},
+                            '${echapperJs(checklistId)}',
+                            '${echapperJs(item.id)}',
+                            this,
+                            event
+                        )"
+                    >
+                </label>
+
+                <div class="checklist-date-quick-actions">
+                    <button
+                        type="button"
+                        onclick="definirDateChecklistRapide(
+                            ${Number(rowId)},
+                            '${echapperJs(checklistId)}',
+                            '${echapperJs(item.id)}',
+                            0,
+                            event
+                        )"
+                    >Aujourd’hui</button>
+
+                    <button
+                        type="button"
+                        onclick="definirDateChecklistRapide(
+                            ${Number(rowId)},
+                            '${echapperJs(checklistId)}',
+                            '${echapperJs(item.id)}',
+                            1,
+                            event
+                        )"
+                    >Demain</button>
+
+                    ${item.dueDate ? `
+                        <button
+                            type="button"
+                            class="checklist-date-remove"
+                            onclick="effacerDateChecklist(
+                                ${Number(rowId)},
+                                '${echapperJs(checklistId)}',
+                                '${echapperJs(item.id)}',
+                                event
+                            )"
+                        >Retirer</button>
+                    ` : ''}
+                </div>
+            </div>
+        </details>
+    `;
+}
+
+async function mettreAJourDateChecklistDepuisMenu(
+    rowId,
+    checklistId,
+    itemId,
+    input,
+    event
+) {
+    event?.stopPropagation();
+
+    await mettreAJourItemChecklist(
+        rowId,
+        checklistId,
+        itemId,
+        'dueDate',
+        input?.value || '',
+        input,
+        event
+    );
+}
+
+async function definirDateChecklistRapide(
+    rowId,
+    checklistId,
+    itemId,
+    offsetDays,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + Number(offsetDays || 0));
+
+    const value = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+    ].join('-');
+
+    await mettreAJourItemChecklist(
+        rowId,
+        checklistId,
+        itemId,
+        'dueDate',
+        value,
+        null,
+        event
+    );
+}
+
+async function effacerDateChecklist(
+    rowId,
+    checklistId,
+    itemId,
+    event
+) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    await mettreAJourItemChecklist(
+        rowId,
+        checklistId,
+        itemId,
+        'dueDate',
+        '',
+        null,
+        event
+    );
 }
 
 function construireAssignationItemChecklist(item, checklistId, rowId, assignedPeople, disabled) {
@@ -4874,6 +5145,14 @@ function initialiserLecteurPiecesJointes() {
 }
 
 function afficherLecteurPieceJointe(meta, url) {
+    const archiveDialog = document.getElementById(
+        'archive-confirm-dialog'
+    );
+    if (archiveDialog) {
+        fermerPopupArchivage(event);
+        return;
+    }
+
     const viewer = document.getElementById('attachment-viewer');
     const content = document.getElementById('attachment-viewer-content');
     const title = document.getElementById('attachment-viewer-title');
@@ -4980,7 +5259,6 @@ function iconePieceJointe(kind) {
 
 function construireSectionCommentaires(todo) {
     const comments = parserCommentaires(todo.COMMENTAIRES);
-    const mentionsEnabled = W.opt.enablementions !== false;
 
     return `
         <section
@@ -5008,31 +5286,14 @@ function construireSectionCommentaires(todo) {
                 <div class="comment-input-wrapper">
                     <textarea
                         class="comment-input"
-                        placeholder="Écrire un commentaire${mentionsEnabled ? ' — utilisez @ pour mentionner quelqu’un' : ''}…"
-                        oninput="ajusterTextarea(this); gererSaisieMention(this)"
-                        onkeydown="gererTouchesMention(this, event)"
+                        placeholder="Écrire un commentaire…"
+                        oninput="ajusterTextarea(this)"
                     ></textarea>
-
-                    ${mentionsEnabled ? construireMenuMentions() : ''}
                 </div>
-
-                ${mentionsEnabled ? `
-                    <div class="comment-mention-tools">
-                        <button
-                            type="button"
-                            class="comment-mention-button"
-                            onclick="ouvrirMenuMentions(this, event)"
-                        >@ Mentionner</button>
-                        <div class="comment-selected-mentions"></div>
-                    </div>
-                ` : ''}
 
                 <div class="comment-grist-author">
                     Le nom de l’auteur est renseigné par Grist avec
                     <code>user.Name</code>.
-                    ${mentionsEnabled
-                        ? 'Les mentions sont visuelles uniquement et n’envoient pas d’e-mail automatique.'
-                        : ''}
                 </div>
 
                 <div class="comment-composer-footer">
@@ -5049,254 +5310,6 @@ function construireSectionCommentaires(todo) {
             </div>
         </section>
     `;
-}
-
-function construireMenuMentions() {
-    const options = RESPONSABLES.map((person) => `
-        <button
-            type="button"
-            class="mention-option"
-            data-member-id="${person.id}"
-            data-search="${echapperAttribut(
-                `${person.label} ${person.email || ''}`.toLocaleLowerCase(
-                    W.cultureFull
-                )
-            )}"
-            onclick="selectionnerMentionCommentaire(this, ${person.id}, event)"
-        >
-            <span
-                class="mention-option-avatar"
-                style="background:${echapperAttribut(person.avatarColor)}"
-            >${echapperHtml(person.initials)}</span>
-            <span class="mention-option-text">
-                <strong>${echapperHtml(person.label)}</strong>
-                <small>${person.email
-                    ? echapperHtml(person.email)
-                    : 'E-mail manquant dans la table Membres'}</small>
-            </span>
-        </button>
-    `).join('');
-
-    return `
-        <div class="mention-menu" hidden>
-            <div class="mention-menu-header">
-                <strong>Mentionner un membre</strong>
-                <button
-                    type="button"
-                    onclick="fermerMenuMentions(this, event)"
-                    aria-label="Fermer"
-                >×</button>
-            </div>
-            <div class="mention-options">
-                ${options || '<div class="section-empty">Aucun membre disponible</div>'}
-            </div>
-        </div>
-    `;
-}
-
-function ouvrirMenuMentions(button, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const composer = button.closest('.comment-composer');
-    const menu = composer?.querySelector('.mention-menu');
-
-    if (!menu) {
-        return;
-    }
-
-    menu.hidden = false;
-    filtrerMenuMentions(menu, '');
-}
-
-function fermerMenuMentions(button, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-    const menu = button.closest('.mention-menu');
-    if (menu) {
-        menu.hidden = true;
-    }
-}
-
-function gererSaisieMention(textarea) {
-    const composer = textarea.closest('.comment-composer');
-    const menu = composer?.querySelector('.mention-menu');
-
-    if (!menu || W.opt.enablementions === false) {
-        return;
-    }
-
-    const context = trouverContexteMention(textarea);
-
-    if (!context) {
-        menu.hidden = true;
-        return;
-    }
-
-    menu.hidden = false;
-    menu.dataset.mentionStart = String(context.start);
-    filtrerMenuMentions(menu, context.query);
-}
-
-function gererTouchesMention(textarea, event) {
-    const composer = textarea.closest('.comment-composer');
-    const menu = composer?.querySelector('.mention-menu');
-
-    if (!menu || menu.hidden) {
-        return;
-    }
-
-    const visibleOptions = Array.from(
-        menu.querySelectorAll('.mention-option:not([hidden])')
-    );
-
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        menu.hidden = true;
-        textarea.focus();
-        return;
-    }
-
-    if (event.key === 'Enter' && visibleOptions.length === 1) {
-        event.preventDefault();
-        visibleOptions[0].click();
-    }
-}
-
-function filtrerMenuMentions(menu, query) {
-    const normalized = valeurTexte(query)
-        .trim()
-        .toLocaleLowerCase(W.cultureFull);
-
-    menu.querySelectorAll('.mention-option').forEach((option) => {
-        option.hidden =
-            normalized !== '' &&
-            !valeurTexte(option.dataset.search).includes(normalized);
-    });
-}
-
-function trouverContexteMention(textarea) {
-    const caret = Number(textarea.selectionStart);
-    const before = textarea.value.slice(0, caret);
-    const match = before.match(/(?:^|\s)@([^@\n]*)$/);
-
-    if (!match) {
-        return null;
-    }
-
-    const query = match[1];
-    return {
-        query,
-        start: caret - query.length - 1,
-        end: caret
-    };
-}
-
-function selectionnerMentionCommentaire(button, memberId, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const composer = button.closest('.comment-composer');
-    const textarea = composer?.querySelector('.comment-input');
-    const menu = composer?.querySelector('.mention-menu');
-    const person = RESPONSABLES_BY_ID.get(Number(memberId));
-
-    if (!composer || !textarea || !person) {
-        return;
-    }
-
-    const context = trouverContexteMention(textarea);
-    const token = `@${person.label}`;
-
-    if (context) {
-        textarea.setRangeText(
-            `${token} `,
-            context.start,
-            context.end,
-            'end'
-        );
-    } else {
-        const separator =
-            textarea.value &&
-            !/\s$/.test(textarea.value)
-                ? ' '
-                : '';
-
-        textarea.setRangeText(
-            `${separator}${token} `,
-            textarea.selectionStart,
-            textarea.selectionEnd,
-            'end'
-        );
-    }
-
-    if (!composer._selectedMentions) {
-        composer._selectedMentions = new Map();
-    }
-
-    composer._selectedMentions.set(person.id, {
-        id: person.id,
-        name: person.label,
-        email: person.email || ''
-    });
-
-    afficherMentionsSelectionnees(composer);
-    if (menu) {
-        menu.hidden = true;
-    }
-
-    textarea.focus();
-    ajusterTextarea(textarea);
-}
-
-function afficherMentionsSelectionnees(composer) {
-    const container = composer.querySelector(
-        '.comment-selected-mentions'
-    );
-
-    if (!container) {
-        return;
-    }
-
-    const mentions = Array.from(
-        composer._selectedMentions?.values?.() || []
-    );
-
-    container.innerHTML = mentions.map((mention) => `
-        <span class="selected-mention-chip">
-            @${echapperHtml(mention.name)}
-            <button
-                type="button"
-                onclick="retirerMentionCommentaire(this, ${Number(mention.id)}, event)"
-                aria-label="Retirer ${echapperAttribut(mention.name)}"
-            >×</button>
-        </span>
-    `).join('');
-}
-
-function retirerMentionCommentaire(button, memberId, event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    const composer = button.closest('.comment-composer');
-    const textarea = composer?.querySelector('.comment-input');
-    const person = RESPONSABLES_BY_ID.get(Number(memberId));
-
-    composer?._selectedMentions?.delete(Number(memberId));
-
-    if (textarea && person) {
-        const token = `@${person.label}`;
-        textarea.value = textarea.value
-            .replaceAll(token, '')
-            .replace(/[ \t]{2,}/g, ' ')
-            .trimStart();
-
-        ajusterTextarea(textarea);
-    }
-
-    if (composer) {
-        afficherMentionsSelectionnees(composer);
-    }
 }
 
 function construireListeCommentaires(comments, rowId) {
@@ -5334,26 +5347,7 @@ function construireListeCommentaires(comments, rowId) {
 }
 
 function construireCorpsCommentaire(comment) {
-    let html = echapperHtml(comment.text).replace(/\n/g, '<br>');
-
-    const mentions = normaliserMentionsCommentaire(comment.mentions)
-        .sort((a, b) => b.name.length - a.name.length);
-
-    mentions.forEach((mention) => {
-        const escapedToken = echapperHtml(`@${mention.name}`);
-        const badge = `
-            <span
-                class="comment-mention"
-                title="${echapperAttribut(
-                    mention.email || mention.name
-                )}"
-            >${escapedToken}</span>
-        `;
-
-        html = html.split(escapedToken).join(badge);
-    });
-
-    return html;
+    return echapperHtml(comment.text).replace(/\n/g, '<br>');
 }
 
 function parserCommentaires(rawValue) {
@@ -5375,10 +5369,7 @@ function parserCommentaires(rawValue) {
                 id: valeurTexte(comment?.id) || `legacy-${index}`,
                 author: valeurTexte(comment?.author) || 'Anonyme',
                 createdAt: valeurTexte(comment?.createdAt),
-                text: valeurTexte(comment?.text),
-                mentions: normaliserMentionsCommentaire(
-                    comment?.mentions
-                )
+                text: valeurTexte(comment?.text)
             }))
             .filter((comment) => comment.text.trim());
     } catch (_) {
@@ -5386,22 +5377,9 @@ function parserCommentaires(rawValue) {
             id: 'legacy-text',
             author: 'Ancien commentaire',
             createdAt: '',
-            text: raw,
-            mentions: []
+            text: raw
         }];
     }
-}
-
-function normaliserMentionsCommentaire(rawMentions) {
-    return normaliserTableau(rawMentions)
-        .map((mention) => ({
-            id: Number(mention?.id) || 0,
-            name: valeurTexte(
-                mention?.name || mention?.label
-            ).trim(),
-            email: normaliserEmail(mention?.email)
-        }))
-        .filter((mention) => mention.name);
 }
 
 async function ajouterCommentaire(rowId, button, event) {
@@ -5409,8 +5387,7 @@ async function ajouterCommentaire(rowId, button, event) {
     event?.stopPropagation();
 
     const section = button.closest('.comments-section');
-    const composer = section?.querySelector('.comment-composer');
-    const textarea = composer?.querySelector('.comment-input');
+    const textarea = section?.querySelector('.comment-input');
     const text = valeurTexte(textarea?.value).trim();
 
     if (!text) {
@@ -5424,12 +5401,6 @@ async function ajouterCommentaire(rowId, button, event) {
         return;
     }
 
-    const selectedMentions = Array.from(
-        composer?._selectedMentions?.values?.() || []
-    ).filter((mention) =>
-        text.includes(`@${mention.name}`)
-    );
-
     button.disabled = true;
     afficherStatutSection(
         'comments',
@@ -5442,8 +5413,7 @@ async function ajouterCommentaire(rowId, button, event) {
         id: genererIdentifiant(),
         author: COMMENT_AUTHOR_PLACEHOLDER,
         createdAt: new Date().toISOString(),
-        text,
-        mentions: selectedMentions
+        text
     };
 
     try {
@@ -5470,27 +5440,13 @@ async function ajouterCommentaire(rowId, button, event) {
             ajusterTextarea(textarea);
         }
 
-        if (composer) {
-            composer._selectedMentions = new Map();
-            afficherMentionsSelectionnees(composer);
-            const menu = composer.querySelector('.mention-menu');
-            if (menu) {
-                menu.hidden = true;
-            }
-        }
-
         rafraichirCommentaires(rowId);
-
-        const mentionCount = savedComment.mentions.length;
-        const message = mentionCount > 0
-            ? `Commentaire ajouté par ${savedComment.author}. ${mentionCount} mention(s) visuelle(s), sans envoi d’e-mail.`
-            : `Commentaire ajouté par ${savedComment.author}.`;
 
         afficherStatutSection(
             'comments',
             rowId,
             'saved',
-            message
+            `Commentaire ajouté par ${savedComment.author}.`
         );
     } catch (error) {
         console.error(
@@ -5510,7 +5466,6 @@ async function ajouterCommentaire(rowId, button, event) {
         button.disabled = false;
     }
 }
-
 
 async function supprimerCommentaire(rowId, commentId, event) {
     event?.preventDefault();
@@ -5739,18 +5694,123 @@ async function creerNouvelleTache(status) {
     }
 }
 
-async function archiverTodo(todoId, event) {
+function ouvrirPopupArchivage(todoId, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
-    const button = event?.currentTarget;
-    const originalContent = button?.innerHTML;
+    fermerPanneauxFiche();
 
-    if (button) {
-        button.disabled = true;
-        button.classList.add('is-loading');
-        button.innerHTML = '…';
-        button.title = 'Archivage en cours…';
+    const popup = document.getElementById('popup-todo');
+    const record = trouverRecord(todoId);
+
+    if (!popup || !record) {
+        return;
+    }
+
+    fermerPopupArchivage();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'archive-confirm-dialog';
+    overlay.className = 'archive-confirm-overlay';
+    overlay.setAttribute('role', 'presentation');
+
+    overlay.innerHTML = `
+        <section
+            class="archive-confirm-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="archive-confirm-title"
+        >
+            <div class="archive-confirm-icon" aria-hidden="true">🗃️</div>
+
+            <div class="archive-confirm-copy">
+                <h3 id="archive-confirm-title">Archiver cette carte ?</h3>
+                <p>
+                    « ${echapperHtml(
+                        valeurTexte(record.DESCRIPTION) ||
+                        'Cette carte'
+                    )} » sera déplacée dans la liste
+                    <strong>${echapperHtml(
+                        valeurTexte(W.opt?.archivestatus).trim() ||
+                        'Archives'
+                    )}</strong>.
+                </p>
+                <small>
+                    Les notes, checklists, membres, commentaires et pièces
+                    jointes seront conservés.
+                </small>
+            </div>
+
+            <div
+                class="archive-confirm-status section-status"
+                aria-live="polite"
+            ></div>
+
+            <div class="archive-confirm-actions">
+                <button
+                    type="button"
+                    class="archive-confirm-cancel"
+                    onclick="fermerPopupArchivage(event)"
+                >Annuler</button>
+
+                <button
+                    type="button"
+                    class="archive-confirm-submit"
+                    onclick="confirmerArchivage(
+                        ${Number(todoId)},
+                        this,
+                        event
+                    )"
+                >Archiver</button>
+            </div>
+        </section>
+    `;
+
+    overlay.addEventListener('click', (clickEvent) => {
+        if (clickEvent.target === overlay) {
+            fermerPopupArchivage(clickEvent);
+        }
+    });
+
+    popup.appendChild(overlay);
+
+    window.setTimeout(() => {
+        overlay.querySelector(
+            '.archive-confirm-submit'
+        )?.focus();
+    }, 0);
+}
+
+function fermerPopupArchivage(event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    document.getElementById(
+        'archive-confirm-dialog'
+    )?.remove();
+}
+
+async function confirmerArchivage(todoId, button, event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const dialog = button?.closest('.archive-confirm-card');
+    const status = dialog?.querySelector(
+        '.archive-confirm-status'
+    );
+    const cancelButton = dialog?.querySelector(
+        '.archive-confirm-cancel'
+    );
+
+    button.disabled = true;
+    if (cancelButton) {
+        cancelButton.disabled = true;
+    }
+
+    if (status) {
+        status.className =
+            'archive-confirm-status section-status saving';
+        status.textContent = 'Archivage…';
     }
 
     try {
@@ -5760,17 +5820,17 @@ async function archiverTodo(todoId, event) {
             'Archives';
 
         const archiveStatus =
-            choices.find((status) =>
-                valeurTexte(status) === configuredStatus
+            choices.find((choice) =>
+                valeurTexte(choice) === configuredStatus
             ) ||
-            choices.find((status) =>
-                valeurTexte(status)
+            choices.find((choice) =>
+                valeurTexte(choice)
                     .toLocaleLowerCase(W.cultureFull) ===
                 configuredStatus
                     .toLocaleLowerCase(W.cultureFull)
             ) ||
-            choices.find((status) =>
-                valeurTexte(status)
+            choices.find((choice) =>
+                valeurTexte(choice)
                     .toLocaleLowerCase(W.cultureFull)
                     .includes('archive')
             );
@@ -5804,6 +5864,7 @@ async function archiverTodo(todoId, event) {
             Object.assign(record, data);
         }
 
+        fermerPopupArchivage();
         fermerPopup();
         await afficherKanban(RECS);
     } catch (error) {
@@ -5812,47 +5873,19 @@ async function archiverTodo(todoId, event) {
             error
         );
 
-        afficherMessageArchivage(
-            error?.message ||
-            'Impossible d’archiver la tâche.'
-        );
+        if (status) {
+            status.className =
+                'archive-confirm-status section-status error';
+            status.textContent =
+                error?.message ||
+                'Impossible d’archiver la tâche.';
+        }
 
-        if (button) {
-            button.disabled = false;
-            button.classList.remove('is-loading');
-            button.innerHTML = originalContent || '🗃️';
-            button.title = 'Archiver la tâche';
+        button.disabled = false;
+        if (cancelButton) {
+            cancelButton.disabled = false;
         }
     }
-}
-
-function afficherMessageArchivage(message) {
-    const popup = document.getElementById('popup-todo');
-    const content = popup?.querySelector(
-        '.popup-content'
-    );
-
-    if (!content) {
-        return;
-    }
-
-    let status = content.querySelector(
-        '.archive-status-message'
-    );
-
-    if (!status) {
-        status = document.createElement('div');
-        status.className =
-            'archive-status-message';
-        status.setAttribute('role', 'alert');
-        content.appendChild(status);
-    }
-
-    status.textContent = message;
-
-    window.setTimeout(() => {
-        status?.remove();
-    }, 4500);
 }
 
 // ========== POPUP ET INTERACTIONS ==========
@@ -5907,7 +5940,7 @@ function ajusterTextarea(textarea) {
 function fermerTousLesMenusMultiples(except = null) {
     document
         .querySelectorAll(
-            '.multi-dropdown[open], .checklist-assignees[open]'
+            '.multi-dropdown[open], .checklist-assignees[open], .checklist-date-picker[open]'
         )
         .forEach((details) => {
             if (details !== except) {
@@ -5927,7 +5960,7 @@ document.addEventListener('keydown', (event) => {
         return;
     }
 
-    const openedDropdown = document.querySelector('.multi-dropdown[open], .checklist-assignees[open]');
+    const openedDropdown = document.querySelector('.multi-dropdown[open], .checklist-assignees[open], .checklist-date-picker[open]');
     if (openedDropdown) {
         openedDropdown.removeAttribute('open');
         return;
@@ -5943,7 +5976,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('click', (event) => {
-    const openedDropdown = event.target.closest('.multi-dropdown, .checklist-assignees');
+    const openedDropdown = event.target.closest('.multi-dropdown, .checklist-assignees, .checklist-date-picker');
     if (W?.opt?.autoclosemenus !== false) {
         fermerTousLesMenusMultiples(openedDropdown);
     }
@@ -6167,13 +6200,6 @@ function valeurTexte(value) {
     return String(value);
 }
 
-function normaliserEmail(value) {
-    const email = valeurTexte(value).trim().toLowerCase();
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-        ? email
-        : '';
-}
-
 function construireInfoCreation(todo) {
     const lines = [];
 
@@ -6356,7 +6382,9 @@ window.togglePopupTodo = togglePopupTodo;
 window.fermerPopup = fermerPopup;
 window.mettreAJourChamp = mettreAJourChamp;
 window.creerNouvelleTache = creerNouvelleTache;
-window.archiverTodo = archiverTodo;
+window.ouvrirPopupArchivage = ouvrirPopupArchivage;
+window.fermerPopupArchivage = fermerPopupArchivage;
+window.confirmerArchivage = confirmerArchivage;
 window.mettreAJourChampPersonnes = mettreAJourChampPersonnes;
 window.filtrerOptionsMultiples = filtrerOptionsMultiples;
 window.viderChampPersonnes = viderChampPersonnes;
@@ -6373,7 +6401,9 @@ window.mettreAJourProprieteFiche = mettreAJourProprieteFiche;
 window.enregistrerEtiquettesDepuisPanneau = enregistrerEtiquettesDepuisPanneau;
 window.retirerEtiquetteFiche = retirerEtiquetteFiche;
 window.basculerRolePersonnePanneau = basculerRolePersonnePanneau;
-window.enregistrerEquipeDepuisPanneau = enregistrerEquipeDepuisPanneau;
+window.mettreAJourDateChecklistDepuisMenu = mettreAJourDateChecklistDepuisMenu;
+window.definirDateChecklistRapide = definirDateChecklistRapide;
+window.effacerDateChecklist = effacerDateChecklist;
 window.gererCreationChecklistClavier = gererCreationChecklistClavier;
 window.ajouterChecklistAvecTitre = ajouterChecklistAvecTitre;
 window.mettreAJourCouleurFiche = mettreAJourCouleurFiche;
@@ -6415,9 +6445,3 @@ window.marquerNotesModifiees = marquerNotesModifiees;
 window.mettreAJourEtatBarreNotes = mettreAJourEtatBarreNotes;
 window.gererRaccourcisNotes = gererRaccourcisNotes;
 
-window.ouvrirMenuMentions = ouvrirMenuMentions;
-window.fermerMenuMentions = fermerMenuMentions;
-window.gererSaisieMention = gererSaisieMention;
-window.gererTouchesMention = gererTouchesMention;
-window.selectionnerMentionCommentaire = selectionnerMentionCommentaire;
-window.retirerMentionCommentaire = retirerMentionCommentaire;

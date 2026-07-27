@@ -1,4 +1,4 @@
-/* ========== KANBAN2 — VERSION 8.4 ========== */
+/* ========== KANBAN2 — VERSION 8.5 ========== */
 
 :root {
     --border-radius: 6px;
@@ -2203,195 +2203,11 @@ label {
 }
 
 
-/* ========== MENTIONS DANS LES COMMENTAIRES ========== */
-
 .comment-input-wrapper {
     position: relative;
     width: 100%;
     max-width: 100%;
     min-width: 0;
-}
-
-.comment-mention-tools {
-    display: flex;
-    min-width: 0;
-    gap: 0.5rem;
-    align-items: flex-start;
-    flex-wrap: wrap;
-}
-
-.comment-mention-button {
-    flex: 0 0 auto;
-    min-height: 32px;
-    padding: 0.38rem 0.58rem;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    color: var(--text-color);
-    background: var(--background-field);
-    cursor: pointer;
-    font-size: 0.76rem;
-    font-weight: 650;
-}
-
-.comment-mention-button:hover {
-    background: var(--background-hover);
-}
-
-.comment-selected-mentions {
-    display: flex;
-    min-width: 0;
-    gap: 0.3rem;
-    flex: 1 1 180px;
-    flex-wrap: wrap;
-}
-
-.selected-mention-chip,
-.comment-mention {
-    display: inline-flex;
-    max-width: 100%;
-    padding: 0.14rem 0.42rem;
-    align-items: center;
-    border-radius: 999px;
-    color: #1d4ed8;
-    background: rgba(37, 99, 235, 0.12);
-    font-weight: 700;
-}
-
-.selected-mention-chip {
-    gap: 0.28rem;
-    font-size: 0.72rem;
-}
-
-.selected-mention-chip button {
-    display: inline-flex;
-    width: 17px;
-    height: 17px;
-    padding: 0;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: 999px;
-    color: inherit;
-    background: transparent;
-    cursor: pointer;
-}
-
-.selected-mention-chip button:hover {
-    background: rgba(37, 99, 235, 0.14);
-}
-
-.comment-mention {
-    font-size: inherit;
-}
-
-.mention-menu {
-    position: absolute;
-    z-index: 1500;
-    right: 0;
-    bottom: calc(100% + 0.4rem);
-    width: min(390px, 100%);
-    max-height: 320px;
-    overflow: hidden;
-    border: 1px solid var(--border-color);
-    border-radius: 9px;
-    color: var(--text-color);
-    background: var(--background-row);
-    box-shadow: var(--shadow-medium);
-}
-
-.mention-menu[hidden] {
-    display: none !important;
-}
-
-.mention-menu-header {
-    display: flex;
-    padding: 0.55rem 0.65rem;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.mention-menu-header strong {
-    font-size: 0.78rem;
-}
-
-.mention-menu-header button {
-    display: inline-flex;
-    width: 25px;
-    height: 25px;
-    padding: 0;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: 5px;
-    color: var(--text-muted);
-    background: transparent;
-    cursor: pointer;
-}
-
-.mention-options {
-    max-height: 260px;
-    padding: 0.35rem;
-    overflow-y: auto;
-    scrollbar-width: thin;
-}
-
-.mention-option {
-    display: flex;
-    width: 100%;
-    min-width: 0;
-    padding: 0.48rem;
-    gap: 0.58rem;
-    align-items: center;
-    border: 0;
-    border-radius: 6px;
-    color: var(--text-color);
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-}
-
-.mention-option:hover {
-    background: var(--background-hover);
-}
-
-.mention-option[hidden] {
-    display: none !important;
-}
-
-.mention-option-avatar {
-    display: inline-flex;
-    width: 30px;
-    height: 30px;
-    flex: 0 0 30px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    color: #fff;
-    font-size: 0.62rem;
-    font-weight: 800;
-}
-
-.mention-option-text {
-    display: grid;
-    min-width: 0;
-    gap: 0.08rem;
-}
-
-.mention-option-text strong,
-.mention-option-text small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.mention-option-text strong {
-    font-size: 0.78rem;
-}
-
-.mention-option-text small {
-    color: var(--text-muted);
-    font-size: 0.68rem;
 }
 
 .section-status.warning {
@@ -6082,5 +5898,306 @@ button.task-compact-meta:hover {
 
     .checklist-inline-date-value {
         display: none;
+    }
+}
+
+
+/* ========================================================================== */
+/* KANBAN2 V8.5 — DATES, ÉQUIPE INSTANTANÉE ET ARCHIVAGE                      */
+/* ========================================================================== */
+
+/* Équipe : sélection instantanée, sans barre de validation. */
+.task-person-card.is-selected {
+    border-color: color-mix(
+        in srgb,
+        var(--focus) 26%,
+        var(--border-color)
+    );
+    background: color-mix(
+        in srgb,
+        var(--background-field) 92%,
+        rgba(37, 99, 235, 0.08)
+    );
+}
+
+.task-people-live-status {
+    min-height: 1.2rem;
+    margin-top: 0.2rem;
+}
+
+.task-people-panel-footer,
+.task-people-save-button {
+    display: none !important;
+}
+
+/* Date d’un élément : menu identique dans sa logique au menu d’attribution. */
+.checklist-date-picker {
+    position: relative;
+    min-width: 31px;
+}
+
+.checklist-date-picker > summary {
+    list-style: none;
+}
+
+.checklist-date-picker > summary::-webkit-details-marker {
+    display: none;
+}
+
+.checklist-date-summary {
+    display: inline-flex;
+    min-width: 31px;
+    min-height: 30px;
+    max-width: 132px;
+    padding: 0.24rem 0.42rem;
+    gap: 0.28rem;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+.checklist-date-picker:not(.readonly) > .checklist-date-summary:hover,
+.checklist-date-picker[open] > .checklist-date-summary {
+    border-color: var(--border-color);
+    color: var(--text-color);
+    background: var(--background-hover);
+}
+
+.checklist-date-picker.has-date > .checklist-date-summary,
+.checklist-date-picker.has-date.readonly > .checklist-date-summary {
+    border-color: rgba(37, 99, 235, 0.25);
+    color: var(--focus);
+    background: rgba(37, 99, 235, 0.08);
+}
+
+.checklist-date-picker.overdue > .checklist-date-summary,
+.checklist-date-picker.overdue.readonly > .checklist-date-summary {
+    border-color: rgba(209, 26, 75, 0.34);
+    color: #d11a4b;
+    background: rgba(209, 26, 75, 0.08);
+}
+
+.checklist-date-summary-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.checklist-date-menu {
+    position: absolute;
+    z-index: 4800;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    display: grid;
+    width: min(300px, calc(100vw - 3rem));
+    padding: 0.65rem;
+    gap: 0.55rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-color);
+    background: var(--background-row);
+    box-shadow: var(--shadow-medium);
+}
+
+.checklist-date-field {
+    display: grid;
+    gap: 0.28rem;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+.checklist-date-field input {
+    width: 100%;
+    min-height: 38px;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    outline: 0;
+    color: var(--text-color);
+    background: var(--background-field);
+    cursor: pointer;
+}
+
+.checklist-date-field input:focus {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13);
+}
+
+.checklist-date-quick-actions {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.checklist-date-quick-actions button {
+    min-height: 31px;
+    padding: 0.36rem 0.52rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    background: var(--background-field);
+    cursor: pointer;
+    font-size: 0.67rem;
+    font-weight: 650;
+}
+
+.checklist-date-quick-actions button:hover {
+    background: var(--background-hover);
+}
+
+.checklist-date-quick-actions .checklist-date-remove {
+    color: var(--danger);
+}
+
+/* Les anciens champs de date superposés ne participent plus au rendu. */
+.checklist-inline-date,
+.checklist-inline-date-input,
+.checklist-inline-date-button {
+    display: none !important;
+}
+
+/* Popup d’archivage personnalisée. */
+.archive-confirm-overlay {
+    position: fixed;
+    z-index: 7600;
+    inset: 0;
+    display: grid;
+    padding: 1rem;
+    place-items: center;
+    background: rgba(71, 85, 105, 0.22);
+    backdrop-filter: blur(2px);
+}
+
+.archive-confirm-card {
+    display: grid;
+    width: min(430px, 100%);
+    padding: 1rem;
+    gap: 0.8rem;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    color: var(--text-color);
+    background: var(--background-row);
+    box-shadow:
+        0 24px 70px rgba(15, 23, 42, 0.28),
+        0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.archive-confirm-icon {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: var(--background-hover);
+    font-size: 1.35rem;
+}
+
+.archive-confirm-copy {
+    display: grid;
+    gap: 0.32rem;
+}
+
+.archive-confirm-copy h3 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.archive-confirm-copy p,
+.archive-confirm-copy small {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.archive-confirm-copy p {
+    font-size: 0.82rem;
+}
+
+.archive-confirm-copy small {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+.archive-confirm-status {
+    min-height: 1.1rem;
+}
+
+.archive-confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.archive-confirm-actions button {
+    min-height: 38px;
+    padding: 0.48rem 0.72rem;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.74rem;
+    font-weight: 700;
+}
+
+.archive-confirm-cancel {
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    background: var(--background-field);
+}
+
+.archive-confirm-submit {
+    border: 1px solid #475569;
+    color: #fff;
+    background: #475569;
+}
+
+.archive-confirm-submit:hover:not(:disabled) {
+    background: #334155;
+}
+
+.archive-confirm-actions button:disabled {
+    cursor: wait;
+    opacity: 0.58;
+}
+
+@media (max-width: 560px) {
+    .checklist-date-menu {
+        position: fixed;
+        z-index: 7700;
+        inset: auto 0 0;
+        width: 100%;
+        padding: 0.9rem;
+        border-radius: 14px 14px 0 0;
+    }
+
+    .checklist-date-summary-value {
+        display: none;
+    }
+
+    .archive-confirm-overlay {
+        align-items: end;
+        padding: 0;
+    }
+
+    .archive-confirm-card {
+        width: 100%;
+        border-radius: 16px 16px 0 0;
+    }
+
+    .archive-confirm-actions {
+        align-items: stretch;
+        flex-direction: column-reverse;
+    }
+
+    .archive-confirm-actions button {
+        width: 100%;
     }
 }
